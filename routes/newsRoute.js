@@ -22,20 +22,21 @@ router.get('/business', async (req, res) => {
 
         console.log('[News Proxy] Fetching Indian business news from GNews API...');
 
-        // GNews API endpoint
+        // GNews API endpoint - using /search with query (free tier compatible)
+        // Free tier doesn't support 'country' parameter, so we use search query instead
         const response = await axios.get(
-            `https://gnews.io/api/v4/top-headlines`,
+            `https://gnews.io/api/v4/search`,
             {
                 params: {
-                    category: 'business',
+                    q: 'India business OR Indian economy OR Mumbai stocks OR Sensex', // Search query for India-related business news
                     lang: 'en',
-                    country: 'in',
                     max: 10,
                     apikey: apiKey,
                 },
                 timeout: 10000,
             }
         );
+
 
         console.log('[News Proxy] Status:', response.status);
         console.log('[News Proxy] Total results from GNews:', response.data.totalArticles);
