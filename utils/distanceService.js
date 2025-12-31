@@ -1,53 +1,114 @@
-import haversineDistanceKm from '../src/utils/haversine.js';
+import axios from 'axios';
 import pinMap from '../src/utils/pincodeMap.js';
 
+// In-memory cache: { "110020-560060": { estTime, distance, timestamp } }
+const distanceCache = new Map();
+const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
 /**
- * Calculate distance between two pincodes using their actual coordinates
- * @param {string|number} originPincode - Origin pincode
- * @param {string|number} destinationPincode - Destination pincode
- * @returns {Object} Object containing distance in km and estimated time in days
+ * Calculate distance using Google Maps Distance Matrix API
+ * NO FALLBACK - throws error if route doesn't exist
  */
 export const calculateDistanceBetweenPincode = async (originPincode, destinationPincode) => {
   const origin = String(originPincode);
   const destination = String(destinationPincode);
 
-  // Get coordinates for both pincodes
-  const originCoords = pinMap[origin];
-  const destCoords = pinMap[destination];
-
-  // ❌ Throw error if origin pincode not found - NO FALLBACK
-  if (!originCoords) {
-    const error = new Error(`Origin pincode ${origin} not found in database`);
-    error.code = 'PINCODE_NOT_FOUND';
-    error.pincode = origin;
-    error.field = 'origin';
-    throw error;
+  // Check cache first
+  const cacheKey = `${origin}-${destination}`;
+  const cached = distanceCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
+    return { estTime: cached.estTime, distance: cached.distance, distanceKm: cached.distanceKm };
   }
 
-  // ❌ Throw error if destination pincode not found - NO FALLBACK
-  if (!destCoords) {
-    const error = new Error(`Destination pincode ${destination} not found in database`);
-    error.code = 'PINCODE_NOT_FOUND';
-    error.pincode = destination;
-    error.field = 'destination';
-    throw error;
+  // Validate pincodes exist
+  if (!pinMap[origin]) {
+    const err = new Error(`Origin pincode ${origin} not found in database`);
+    err.code = 'PINCODE_NOT_FOUND';
+    err.field = 'origin';
+    throw err;
+  }
+  if (!pinMap[destination]) {
+    const err = new Error(`Destination pincode ${destination} not found in database`);
+    err.code = 'PINCODE_NOT_FOUND';
+    err.field = 'destination';
+    throw err;
   }
 
-  // Calculate distance using haversine formula
-  const distanceKm = haversineDistanceKm(
-    originCoords.lat,
-    originCoords.lng,
-    destCoords.lat,
-    destCoords.lng
-  );
+  // Check API key
+  const key = process.env.GOOGLE_MAP_API_KEY;
+  if (!key) {
+    const err = new Error('GOOGLE_MAP_API_KEY not configured');
+    err.code = 'API_KEY_MISSING';
+    throw err;
+  }
 
-  // Calculate estimated delivery time (rough estimate: 400km per day)
-  const estTime = Math.max(1, Math.ceil(distanceKm / 400));
+  // Call Google Maps API
+  try {
+    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${key}&mode=driving&region=in`;
+    const { data } = await axios.get(url, { timeout: 8000 });
 
-  return {
-    estTime: estTime.toString(),
-    distance: `${Math.round(distanceKm)} km`
-  };
+    if (data.status !== 'OK') {
+      const err = new Error(`Google Maps API error: ${data.status}`);
+      err.code = 'GOOGLE_API_ERROR';
+      throw err;
+    }
+
+    const element = data.rows?.[0]?.elements?.[0];
+    if (!element) {
+      const err = new Error('No route data from API');
+      err.code = 'NO_ROUTE_DATA';
+      throw err;
+    }
+
+    // Check if road route exists
+    if (element.status === 'ZERO_RESULTS' || element.status === 'NOT_FOUND') {
+      const err = new Error(`No direct road route exists between ${origin} and ${destination}. These locations cannot be connected by road transport.`);
+      err.code = 'NO_ROAD_ROUTE';
+      err.origin = origin;
+      err.destination = destination;
+      throw err;
+    }
+
+    if (element.status !== 'OK') {
+      const err = new Error(`Route error: ${element.status}`);
+      err.code = 'ROUTE_ERROR';
+      throw err;
+    }
+
+    const distanceMeters = element.distance?.value;
+    if (!distanceMeters) {
+      const err = new Error('Distance not found in API response');
+      err.code = 'DISTANCE_NOT_FOUND';
+      throw err;
+    }
+
+    const distanceKm = Math.round(distanceMeters / 1000);
+    const estTime = String(Math.max(1, Math.ceil(distanceKm / 400)));
+
+    // Cache result
+    const result = { estTime, distance: `${distanceKm} km`, distanceKm, timestamp: Date.now() };
+    distanceCache.set(cacheKey, result);
+
+    console.log(`✅ Distance: ${origin}→${destination} = ${distanceKm} km (${estTime} days)`);
+    return { estTime, distance: `${distanceKm} km`, distanceKm };
+
+  } catch (err) {
+    // Rethrow custom errors
+    if (err.code && (err.code.startsWith('PINCODE_') || err.code === 'NO_ROAD_ROUTE' || err.code === 'API_KEY_MISSING' || err.code.startsWith('GOOGLE_') || err.code.startsWith('ROUTE_') || err.code.startsWith('DISTANCE_'))) {
+      throw err;
+    }
+    // Network errors
+    if (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT') {
+      const newErr = new Error('Google Maps API request timed out');
+      newErr.code = 'API_TIMEOUT';
+      throw newErr;
+    }
+    // Generic error
+    console.error('Distance calculation failed:', err.message);
+    const newErr = new Error(`Failed to calculate distance: ${err.message}`);
+    newErr.code = 'CALC_ERROR';
+    throw newErr;
+  }
 };
 
 /**

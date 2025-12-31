@@ -5,12 +5,10 @@ import temporaryTransporterModel from "../model/temporaryTransporterModel.js";
 import transporterModel from "../model/transporterModel.js";
 import usertransporterrelationshipModel from "../model/usertransporterrelationshipModel.js";
 import dotenv from "dotenv";
-import axios from "axios";
 import packingModel from "../model/packingModel.js";
 import ratingModel from "../model/ratingModel.js";
 import PackingList from "../model/packingModel.js"; // Make sure model is imported
-import haversineDistanceKm from "../src/utils/haversine.js";
-import pinMap from "../src/utils/pincodeMap.js";
+import { calculateDistanceBetweenPincode } from "../utils/distanceService.js";
 import { zoneForPincode } from "../src/utils/pincodeZoneLookup.js";
 import {
   validateZoneMatrix,
@@ -76,103 +74,8 @@ export const deletePackingList = async (req, res) => {
   }
 };
 
-// ========== DISTANCE CACHING ==========
-// In-memory cache for pincode distances (avoids repeat calculations/API calls)
-// Key: "origin-destination", Value: { result, timestamp }
-const distanceCache = new Map();
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour cache TTL
-
-const calculateDistanceBetweenPincode = async (origin, destination) => {
-  const cacheKey = `${origin}-${destination}`;
-
-  // Check cache first
-  const cached = distanceCache.get(cacheKey);
-  if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
-    // DEBUG LOG REMOVED
-    return cached.result;
-  }
-
-  // First, try fast local calculation (no external API needed)
-  try {
-    const originStr = String(origin);
-    const destStr = String(destination);
-
-    const originCoords = pinMap[originStr];
-    const destCoords = pinMap[destStr];
-
-    if (originCoords && destCoords) {
-      const distanceKm = haversineDistanceKm(
-        originCoords.lat,
-        originCoords.lng,
-        destCoords.lat,
-        destCoords.lng
-      );
-
-      const estTime = Math.max(1, Math.ceil(distanceKm / 400));
-
-      console.log(`[Distance] Local calc: ${originStr} -> ${destStr} = ${Math.round(distanceKm)} km, ETA: ${estTime} days`);
-
-      const result = {
-        estTime: estTime.toString(),
-        distance: `${Math.round(distanceKm)} km`,
-        distanceKm: Math.round(distanceKm),
-      };
-
-      // Cache the result
-      distanceCache.set(cacheKey, { result, timestamp: Date.now() });
-      return result;
-    }
-  } catch (localError) {
-    console.warn("Local distance calculation failed:", localError.message);
-  }
-
-  // Fallback: try Google Maps API with timeout
-  try {
-    const response = await axios.get(
-      `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${process.env.GOOGLE_MAP_API_KEY}`,
-      { timeout: 5000 } // 5 second timeout to prevent hanging
-    );
-
-    // Check if route was found
-    const element = response.data.rows[0]?.elements[0];
-
-    if (element?.status === 'NOT_FOUND' || element?.status === 'ZERO_RESULTS') {
-      console.log(`[Distance] No road route found: ${origin} -> ${destination}`);
-      return {
-        estTime: "N/A",
-        distance: "No direct road route found",
-        distanceKm: null,
-        error: 'NO_ROUTE_FOUND'
-      };
-    }
-
-    if (!element?.distance?.value) {
-      throw new Error('Invalid response from Google Maps API');
-    }
-
-    const estTime = (element.distance.value / 400000).toFixed(2);
-    const distance = element.distance.text;
-    const result = {
-      estTime: estTime,
-      distance: distance,
-      distanceKm: Math.round(element.distance.value / 1000)
-    };
-
-    // Cache the result
-    distanceCache.set(cacheKey, { result, timestamp: Date.now() });
-    return result;
-  } catch (error) {
-    console.warn(`[Distance] API error for ${origin} -> ${destination}:`, error.message);
-    return {
-      estTime: "N/A",
-      distance: "Distance calculation failed",
-      distanceKm: null,
-      error: 'CALCULATION_FAILED'
-    };
-  }
-};
 // -----------------------------
-// Add these helpers ABOVE calculatePrice
+// Helpers for calculatePrice
 // -----------------------------
 function clampNumber(v, min, max) {
   let n = Number(v || 0);
@@ -350,29 +253,44 @@ export const calculatePrice = async (req, res) => {
       });
     }
 
-    const distData = await calculateDistanceBetweenPincode(
-      fromPincode,
-      toPincode
-    );
-
-    // ❌ STOP if no route found or distance calculation failed
-    if (distData.error === 'NO_ROUTE_FOUND') {
-      return res.status(400).json({
-        success: false,
-        message: 'No direct road route found between these pincodes',
-        error: 'NO_ROUTE_FOUND',
-        fromPincode,
-        toPincode
-      });
-    }
-
-    if (distData.error === 'CALCULATION_FAILED') {
+    // Calculate distance using Google Maps API (throws error if no route)
+    let distData;
+    try {
+      distData = await calculateDistanceBetweenPincode(fromPincode, toPincode);
+    } catch (error) {
+      // Handle NO_ROAD_ROUTE error
+      if (error.code === 'NO_ROAD_ROUTE') {
+        return res.status(400).json({
+          success: false,
+          message: error.message,
+          error: 'NO_ROAD_ROUTE',
+          fromPincode,
+          toPincode
+        });
+      }
+      // Handle PINCODE_NOT_FOUND error
+      if (error.code === 'PINCODE_NOT_FOUND') {
+        return res.status(400).json({
+          success: false,
+          message: error.message,
+          error: 'PINCODE_NOT_FOUND',
+          field: error.field
+        });
+      }
+      // Handle API errors
+      if (error.code === 'API_KEY_MISSING' || error.code === 'GOOGLE_API_ERROR' || error.code === 'API_TIMEOUT') {
+        return res.status(500).json({
+          success: false,
+          message: 'Distance calculation service unavailable. Please try again.',
+          error: error.code
+        });
+      }
+      // Generic error
+      console.error('Distance calculation error:', error);
       return res.status(500).json({
         success: false,
-        message: 'Distance calculation failed',
-        error: 'CALCULATION_FAILED',
-        fromPincode,
-        toPincode
+        message: 'Failed to calculate distance',
+        error: 'CALCULATION_FAILED'
       });
     }
 
