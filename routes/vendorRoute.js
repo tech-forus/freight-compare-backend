@@ -3,10 +3,10 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import fetch from "node-fetch";
 import dotenv from "dotenv";
 import WheelseyePricing from '../model/wheelseyePricingModel.js';
 import { calculateChargeableWeight, validateShipmentDetails } from '../utils/chargeableWeightService.js';
+import { calculateDistanceBetweenPincode } from '../utils/distanceService.js';
 dotenv.config();
 
 const router = express.Router();
@@ -263,25 +263,38 @@ router.post("/wheelseye-distance", async (req, res) => {
       .status(400)
       .json({ error: "origin and destination are required" });
   }
-  const key = process.env.GOOGLE_MAP_API_KEY;
-  if (!key) return res.status(400).json({ error: "GOOGLE_MAP_API_KEY not configured" });
-
-  const params = new URLSearchParams({ origins: origin, destinations: destination, key });
-  const url = `https://maps.googleapis.com/maps/api/distancematrix/json?${params.toString()}`;
 
   try {
-    const resp = await fetch(url);
-    const data = await resp.json();
-    const meters = data?.rows?.[0]?.elements?.[0]?.distance?.value;
-    if (!meters)
-      return res.status(404).json({ error: "No distance found", raw: data });
+    const { distanceKm } = await calculateDistanceBetweenPincode(origin, destination);
     res.json({
-      distanceKm: Number((meters / 1000).toFixed(1)),
-      raw: data?.status || "OK",
+      distanceKm,
+      status: "OK",
     });
-  } catch (e) {
-    console.error("DM API error:", e.message);
-    res.status(500).json({ error: "Server error" });
+  } catch (error) {
+    // Handle NO_ROAD_ROUTE error
+    if (error.code === 'NO_ROAD_ROUTE') {
+      return res.status(400).json({
+        error: "No direct road route exists",
+        message: error.message,
+        origin,
+        destination
+      });
+    }
+    // Handle PINCODE_NOT_FOUND error
+    if (error.code === 'PINCODE_NOT_FOUND') {
+      return res.status(400).json({
+        error: "Invalid pincode",
+        message: error.message,
+        field: error.field
+      });
+    }
+    // Handle API errors
+    if (error.code === 'API_KEY_MISSING') {
+      return res.status(500).json({ error: "GOOGLE_MAP_API_KEY not configured" });
+    }
+    // Generic error
+    console.error("Distance calculation error:", error.message);
+    res.status(500).json({ error: "Distance calculation failed" });
   }
 });
 

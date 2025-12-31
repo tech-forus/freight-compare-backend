@@ -3,79 +3,12 @@ import mongoose from 'mongoose';
 import usertransporterrelationshipModel from '../model/usertransporterrelationshipModel.js';
 import transporterModel from '../model/transporterModel.js';
 import dotenv from 'dotenv';
-import axios from 'axios';
 import customerModel from '../model/customerModel.js';
 import priceModel from '../model/priceModel.js';
 import ratingModel from '../model/ratingModel.js';
-import haversineDistanceKm from '../src/utils/haversine.js';
-import pinMap from '../src/utils/pincodeMap.js';
+import { calculateDistanceBetweenPincode } from '../utils/distanceService.js';
 
 dotenv.config();
-
-const calculateDistanceBetweenPincode = async(origin, destination) =>{
-  try {
-    const response = await axios.get(`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${process.env.GOOGLE_MAP_API_KEY}`);
-
-    // Check if route was found
-    const element = response.data.rows[0]?.elements[0];
-
-    if (element?.status === 'NOT_FOUND' || element?.status === 'ZERO_RESULTS') {
-      console.log(`[Calculator] No road route found via Google Maps: ${origin} -> ${destination}`);
-      // Fall through to pincode coordinates fallback
-      throw new Error('NO_ROUTE_FOUND');
-    }
-
-    if (!element?.distance?.value) {
-      throw new Error('Invalid response from Google Maps API');
-    }
-
-    const estTime = (element.distance.value / 400000).toFixed(2);
-    const distance = element.distance.text;
-    return {estTime: estTime, distance: distance};
-  } catch (error) {
-    console.log("Google Maps API failed, using pincode coordinates fallback:", error.message);
-    
-    // Fallback to pincode coordinates calculation
-    try {
-      const originStr = String(origin);
-      const destStr = String(destination);
-      
-      const originCoords = pinMap[originStr];
-      const destCoords = pinMap[destStr];
-      
-      if (!originCoords || !destCoords) {
-        console.warn(`Pincode coordinates not found for ${originStr} or ${destStr}`);
-        return {
-          estTime: "N/A",
-          distance: "No direct road route found",
-          error: 'NO_ROUTE_FOUND'
-        };
-      }
-      
-      const distanceKm = haversineDistanceKm(
-        originCoords.lat,
-        originCoords.lng,
-        destCoords.lat,
-        destCoords.lng
-      );
-      
-      const estTime = Math.max(1, Math.ceil(distanceKm / 400));
-      
-      return {
-        estTime: estTime.toString(),
-        distance: `${Math.round(distanceKm)} km`
-      };
-      
-    } catch (fallbackError) {
-      console.error("Fallback distance calculation also failed:", fallbackError);
-      return {
-        estTime: "N/A",
-        distance: "Distance calculation failed",
-        error: 'CALCULATION_FAILED'
-      };
-    }
-  }
-}
 
 const calculate = async (
   customerID,

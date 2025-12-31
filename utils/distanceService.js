@@ -6,8 +6,29 @@ const distanceCache = new Map();
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 /**
- * Calculate distance using Google Maps Distance Matrix API
- * NO FALLBACK - throws error if route doesn't exist
+ * 🎯 SINGLE SOURCE OF TRUTH for Distance Calculation
+ *
+ * ⚠️ CRITICAL: This is the ONLY place distance calculation should be implemented.
+ * ⚠️ DO NOT copy this function to other files
+ * ⚠️ DO NOT create local distance calculation functions
+ * ⚠️ ALWAYS import from this file
+ *
+ * Uses Google Maps Distance Matrix API with 30-day in-memory cache.
+ * NO haversine fallback - throws error if no road route exists.
+ *
+ * @example
+ * import { calculateDistanceBetweenPincode } from '../utils/distanceService.js';
+ * const { estTime, distance, distanceKm } = await calculateDistanceBetweenPincode('110020', '560060');
+ * // Returns: { estTime: "6", distance: "2100 km", distanceKm: 2100 }
+ *
+ * @param {string|number} originPincode - Origin pincode (e.g., "110020")
+ * @param {string|number} destinationPincode - Destination pincode (e.g., "560060")
+ * @returns {Promise<{estTime: string, distance: string, distanceKm: number}>}
+ * @throws {Error} NO_ROAD_ROUTE - No direct road connection exists (e.g., islands)
+ * @throws {Error} PINCODE_NOT_FOUND - Pincode doesn't exist in database
+ * @throws {Error} API_KEY_MISSING - GOOGLE_MAP_API_KEY not configured
+ * @throws {Error} GOOGLE_API_ERROR - Google Maps API returned error
+ * @throws {Error} API_TIMEOUT - Request took >8 seconds
  */
 export const calculateDistanceBetweenPincode = async (originPincode, destinationPincode) => {
   const origin = String(originPincode);
