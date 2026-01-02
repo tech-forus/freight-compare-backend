@@ -83,11 +83,19 @@ export const initiateSignup = async (req, res) => {
       });
     }
 
+    // Check if customer already exists (only email and phone are truly unique)
     const existingCustomer = await customerModel.findOne({
-      $or: [{ email }, { phone }, { gstNumber }, { address }],
+      $or: [{ email }, { phone }],
     });
 
     if (existingCustomer) {
+      // Tell user which field is duplicate
+      if (existingCustomer.email === email) {
+        return res.status(409).json({ message: "Email already registered." });
+      }
+      if (existingCustomer.phone === Number(phone)) {
+        return res.status(409).json({ message: "Phone number already registered." });
+      }
       return res.status(409).json({ message: "Customer already exists." });
     }
 

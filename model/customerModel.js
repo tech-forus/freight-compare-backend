@@ -14,14 +14,14 @@ const customerSchema = new mongoose.Schema({
     required: true,
     unique: true,
   },
-  phone:{
+  phone: {
     type: Number,
     required: true,
-    unique: true
+    unique: true  // ✅ Phone should be unique (primary contact)
   },
   whatsappNumber: {
     type: Number,
-    unique: true
+    // Removed unique: true - multiple users may share company WhatsApp
   },
   password: {
     type: String,
@@ -34,13 +34,13 @@ const customerSchema = new mongoose.Schema({
   gstNumber: {
     type: String,
     required: true,
-    unique: true,
+    // Removed unique: true - multiple users from same company share GST
   },
 
   address: {
     type: String,
     required: true,
-    unique: true,
+    // Removed unique: true - multiple users can have same business address
   },
   state: {
     type: String,
@@ -107,9 +107,9 @@ const customerSchema = new mongoose.Schema({
     type: String,
     default: ""
   },
-  
-  isSubscribed:{
-    type:Boolean,
+
+  isSubscribed: {
+    type: Boolean,
     default: false,
     required: true
   },
@@ -123,11 +123,11 @@ const customerSchema = new mongoose.Schema({
     default: false,
     required: true
   },
-  tokenAvailable: { 
+  tokenAvailable: {
     type: Number,
     default: 10,
     required: true
   }
-}, {timestamps: true});
+}, { timestamps: true });
 
 export default mongoose.model("customers", customerSchema);
