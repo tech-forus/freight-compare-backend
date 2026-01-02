@@ -126,12 +126,27 @@ export const initiateSignup = async (req, res) => {
 
     await redisClient.setEx(`pendingSignup:${email}`, 600, JSON.stringify(redisPayload));
 
-    await resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL || "tech@foruselectric.com",
-      to: email,
-      subject: "Email Verification - Forus Logistics",
-      html: `<p>Your email verification OTP is <strong>${emailOtp}</strong>. It will expire in 10 minutes.</p>`,
-    });
+    // Send email OTP using Resend with proper error handling
+    try {
+      const emailResult = await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev",
+        to: email,
+        subject: "Email Verification - Forus Logistics",
+        html: `<p>Your email verification OTP is <strong>${emailOtp}</strong>. It will expire in 10 minutes.</p>`,
+      });
+
+      console.log('[Resend] Email sent successfully:', emailResult);
+    } catch (emailError) {
+      console.error('[Resend] Failed to send email:', emailError);
+      console.error('[Resend] Error details:', JSON.stringify(emailError, null, 2));
+
+      // Still return success to user (OTP saved in Redis)
+      // But log the email failure for debugging
+      return res.status(200).json({
+        message: "OTP generated. If email doesn't arrive, check spam folder or contact support.",
+        warning: "Email delivery may be delayed",
+      });
+    }
 
     // TODO: Send phoneOtp via SMS provider
     // For now, only email OTP is sent
@@ -204,7 +219,7 @@ export const loginController = async (req, res) => {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'your_jwt_secret_key_change_this_to_a_secure_random_string_minimum_32_characters') {
     console.error("FATAL ERROR: JWT_SECRET is not properly configured.");
     console.error("Current JWT_SECRET value:", process.env.JWT_SECRET ? "SET (but may be default)" : "NOT SET");
-    return res.status(500).json({ 
+    return res.status(500).json({
       message: "Server configuration error: JWT_SECRET not properly set.",
       error: process.env.NODE_ENV === "development" ? "JWT_SECRET missing or using default value" : undefined
     });
@@ -254,7 +269,7 @@ export const loginController = async (req, res) => {
       (err, token) => {
         if (err) {
           console.error("JWT Sign Error:", err);
-          return res.status(500).json({ 
+          return res.status(500).json({
             message: "Server error during token generation.",
             error: process.env.NODE_ENV === "development" ? err.message : undefined
           });
@@ -271,7 +286,7 @@ export const loginController = async (req, res) => {
           });
         } catch (dataError) {
           console.error("Error processing customer data:", dataError);
-          return res.status(500).json({ 
+          return res.status(500).json({
             message: "Server error during login.",
             error: process.env.NODE_ENV === "development" ? dataError.message : undefined
           });
@@ -281,7 +296,7 @@ export const loginController = async (req, res) => {
   } catch (error) {
     console.error("Login Error:", error);
     console.error("Error Stack:", error.stack);
-    return res.status(500).json({ 
+    return res.status(500).json({
       message: "Server error during login.",
       error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
