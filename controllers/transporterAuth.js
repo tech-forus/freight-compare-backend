@@ -10,21 +10,13 @@ const __dirname  = dirname(__filename);
 import redisClient from "../utils/redisClient.js";
 import dotenv from 'dotenv'
 import jwt from "jsonwebtoken";
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
 dotenv.config();
 
 const BCRYPT_SALT_ROUNDS = 10;
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
-  auth: {
-    user: process.env.NODEMAILER_USER,
-    pass: process.env.NODEMAILER_PASSWORD,
-  },
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 
 export const addTransporter = async (req, res) => {

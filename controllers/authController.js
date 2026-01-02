@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import customerModel from "../model/customerModel.js";
 import jwt from "jsonwebtoken";
 import generatePassword from "generate-password";
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 import twilio from "twilio";
 import redisClient from "../utils/redisClient.js";
 
@@ -11,19 +11,7 @@ dotenv.config();
 
 const BCRYPT_SALT_ROUNDS = 10;
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
-  auth: {
-    user: process.env.NODEMAILER_USER,
-    pass: process.env.NODEMAILER_PASSWORD,
-  },
-  tls: {
-    // Do not fail on invalid certs (for development/corporate networks)
-    rejectUnauthorized: false
-  }
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -138,8 +126,8 @@ export const initiateSignup = async (req, res) => {
 
     await redisClient.setEx(`pendingSignup:${email}`, 600, JSON.stringify(redisPayload));
 
-    await transporter.sendMail({
-      from: "Forus Logistics <tech@foruselectric.com>",
+    await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || "tech@foruselectric.com",
       to: email,
       subject: "Email Verification - Forus Logistics",
       html: `<p>Your email verification OTP is <strong>${emailOtp}</strong>. It will expire in 10 minutes.</p>`,
@@ -344,8 +332,8 @@ export const forgotPasswordController = async (req, res) => {
 
     const emailHtml = `...${newPassword}...${fullName}...`; // keep your HTML template with updated variables
 
-    await transporter.sendMail({
-      from: "Forus Team <tech@foruselectric.com>",
+    await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || "tech@foruselectric.com",
       to: customer.email,
       subject: "Your New Password - Forus Logistics",
       html: emailHtml,
@@ -398,8 +386,8 @@ export const changePasswordController = async (req, res) => {
 
     const emailHtml = `...${fullName}...`; // plug into your existing HTML
 
-    await transporter.sendMail({
-      from: "Forus Team <tech@foruselectric.com>",
+    await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || "tech@foruselectric.com",
       to: user.email,
       subject: "Password Changed - Forus Logistics",
       html: emailHtml,
