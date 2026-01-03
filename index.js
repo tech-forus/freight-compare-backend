@@ -27,6 +27,8 @@ import odaRoute from "./routes/odaRoute.js";
 import invoiceChargesRoutes from './routes/invoiceChargesRoutes.js';
 // ✅ NEW: News proxy route (bypass CORS for NewsAPI)
 import newsRoute from './routes/newsRoute.js';
+// ✅ NEW: Form config route (Form Builder)
+import formConfigRoute from './routes/formConfigRoute.js';
 
 // Dev-stub routes (ESM imports)
 import dashboardRoutes from "./routes/dashboard.js";
@@ -202,6 +204,8 @@ app.use("/api/admin/management", userManagementRoute);
 app.use('/api/transporters', invoiceChargesRoutes);
 // ✅ NEW: News proxy endpoint (fixes CORS for NewsAPI)
 app.use('/api/news', newsRoute);
+// ✅ NEW: Form config endpoint (Form Builder)
+app.use('/api/form-config', formConfigRoute);
 
 // Bulk upload stub
 app.post("/upload", async (req, res) => {
