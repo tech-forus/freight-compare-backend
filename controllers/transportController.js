@@ -1,4 +1,5 @@
 
+import mongoose from "mongoose";
 import customerModel from "../model/customerModel.js";
 import priceModel from "../model/priceModel.js";
 import temporaryTransporterModel from "../model/temporaryTransporterModel.js";
@@ -307,18 +308,38 @@ export const calculatePrice = async (req, res) => {
       // PERFORMANCE: Run all 3 DB queries in PARALLEL instead of sequential
       console.time(`[${rid}] DB_PARALLEL`);
       const [tiedUpCompanies, customerData, transporterData] = await Promise.all([
-        // Query 1: Tied-up companies (include serviceability for pincode-level checks)
-        temporaryTransporterModel
-          .find({
-            customerID,
-            $or: [
-              { approvalStatus: "approved" },
-              { approvalStatus: { $exists: false } }
-            ]
-          })
-          .select("customerID companyName prices selectedZones zoneConfig serviceability invoice_rule invoiceRule invoiceValueCharges approvalStatus")
-          .lean()
-          .maxTimeMS(20000),
+        // Query 1: Tied-up companies - OPTIMIZED: Only fetch the 2 pincodes we need from serviceability
+        // This reduces data from potentially 30,000+ entries per vendor to just 2
+        temporaryTransporterModel.aggregate([
+          {
+            $match: {
+              customerID: new mongoose.Types.ObjectId(customerID),
+              $or: [
+                { approvalStatus: "approved" },
+                { approvalStatus: { $exists: false } }
+              ]
+            }
+          },
+          {
+            $project: {
+              customerID: 1,
+              companyName: 1,
+              prices: 1,
+              selectedZones: 1,
+              zoneConfig: 1,
+              invoiceValueCharges: 1,
+              approvalStatus: 1,
+              // CRITICAL OPTIMIZATION: Only fetch the 2 pincodes we need
+              serviceability: {
+                $filter: {
+                  input: { $ifNull: ["$serviceability", []] },
+                  as: "s",
+                  cond: { $in: ["$$s.pincode", [fromPinStr, toPinStr]] }
+                }
+              }
+            }
+          }
+        ]).option({ maxTimeMS: 20000 }),
 
         // Query 2: Customer data
         customerModel
@@ -1229,7 +1250,7 @@ export const getTemporaryTransporters = async (req, res) => {
     const query = customerID ? { customerID: customerID } : {};
     // DEBUG LOG REMOVED
     // Fetch ALL transporters without any limit
-    const temporaryTransporters = await temporaryTransporterModel.find(query).lean();
+    const temporaryTransporters = await temporaryTransporterModel.find(query).select('-serviceability -zoneConfig').lean();
     // DEBUG LOG REMOVED
     // Detailed logging to help debug
     // DEBUG LOG REMOVED
