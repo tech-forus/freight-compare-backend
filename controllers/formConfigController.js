@@ -1,8 +1,37 @@
 import FormConfig, { DEFAULT_ADD_VENDOR_FIELDS } from "../model/formConfigModel.js";
 
 /**
+ * Merge existing config with default fields
+ * Adds any missing default fields while preserving existing customizations
+ */
+const mergeWithDefaults = async (config, defaults) => {
+    const existingFieldIds = new Set(config.fields.map(f => f.fieldId));
+    const missingFields = defaults.filter(d => !existingFieldIds.has(d.fieldId));
+
+    if (missingFields.length > 0) {
+        // Add missing fields
+        config.fields.push(...missingFields);
+
+        // Save to database
+        await FormConfig.updateOne(
+            { pageId: config.pageId },
+            {
+                $push: { fields: { $each: missingFields } },
+                $set: { lastModifiedAt: new Date() }
+            }
+        );
+
+        console.log(`[FormConfig] Auto-merged ${missingFields.length} new default fields into ${config.pageId}:`,
+            missingFields.map(f => f.fieldId).join(', '));
+    }
+
+    return config;
+};
+
+/**
  * Get form configuration for a page
  * Auto-seeds default config if not found
+ * Auto-merges missing default fields if config exists
  */
 export const getFormConfig = async (req, res) => {
     try {
@@ -28,6 +57,11 @@ export const getFormConfig = async (req, res) => {
 
         if (!config) {
             return res.status(404).json({ success: false, message: "Form config not found" });
+        }
+
+        // Auto-merge missing default fields (schema evolution)
+        if (pageId === "add-vendor") {
+            config = await mergeWithDefaults(config, DEFAULT_ADD_VENDOR_FIELDS);
         }
 
         // Filter out deleted fields for client
@@ -77,6 +111,11 @@ export const getFullFormConfig = async (req, res) => {
 
         if (!config) {
             return res.status(404).json({ success: false, message: "Form config not found" });
+        }
+
+        // Auto-merge missing default fields (schema evolution)
+        if (pageId === "add-vendor") {
+            config = await mergeWithDefaults(config, DEFAULT_ADD_VENDOR_FIELDS);
         }
 
         // Return all fields sorted by order

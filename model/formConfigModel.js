@@ -29,13 +29,18 @@ const fieldConfigSchema = new mongoose.Schema({
     },
     gridSpan: {
         type: Number,
-        default: 1, // 1 = half width, 2 = full width
+        default: 1,
         min: 1,
-        max: 2,
+        max: 3,
     },
     order: {
         type: Number,
         default: 0,
+    },
+    section: {
+        type: String,
+        enum: ["company", "transport", "charges"],
+        default: "company",
     },
     constraints: {
         maxLength: { type: Number, default: null },
@@ -58,6 +63,10 @@ const fieldConfigSchema = new mongoose.Schema({
     autoCapitalize: {
         type: String,
         enum: ["none", "words", "characters", "uppercase", null],
+        default: null,
+    },
+    suffix: {
+        type: String,
         default: null,
     },
 });
@@ -126,8 +135,11 @@ const formConfigSchema = new mongoose.Schema(
     { timestamps: true }
 );
 
-// Default field configs for Add Vendor page (matches CompanySection.tsx)
+// Default field configs for Add Vendor page
 export const DEFAULT_ADD_VENDOR_FIELDS = [
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SECTION 1: Company & Contact Information
+    // ═══════════════════════════════════════════════════════════════════════════
     {
         fieldId: "companyName",
         label: "Company Name",
@@ -137,6 +149,7 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         visible: true,
         gridSpan: 1,
         order: 1,
+        section: "company",
         constraints: { maxLength: 60, minLength: 1 },
     },
     {
@@ -148,6 +161,7 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         visible: true,
         gridSpan: 1,
         order: 2,
+        section: "company",
         constraints: { maxLength: 30, minLength: 1 },
         autoCapitalize: "uppercase",
     },
@@ -160,7 +174,8 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         visible: true,
         gridSpan: 1,
         order: 3,
-        constraints: { maxLength: 10, minLength: 10, pattern: "^[1-9][0-9]{9}$", patternMessage: "Must be 10 digits, cannot start with 0" },
+        section: "company",
+        constraints: { maxLength: 10, minLength: 10 },
         inputMode: "numeric",
     },
     {
@@ -172,6 +187,7 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         visible: true,
         gridSpan: 1,
         order: 4,
+        section: "company",
         constraints: {},
     },
     {
@@ -183,7 +199,8 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         visible: true,
         gridSpan: 1,
         order: 5,
-        constraints: { maxLength: 15, minLength: 15, pattern: "^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$", patternMessage: "Must be valid 15-char GSTIN" },
+        section: "company",
+        constraints: { maxLength: 15, minLength: 15 },
         autoCapitalize: "uppercase",
     },
     {
@@ -195,6 +212,7 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         visible: true,
         gridSpan: 1,
         order: 6,
+        section: "company",
         constraints: { maxLength: 20 },
         autoCapitalize: "uppercase",
     },
@@ -207,7 +225,8 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         visible: true,
         gridSpan: 1,
         order: 7,
-        constraints: { maxLength: 20, pattern: "^[A-Za-z0-9]*$", patternMessage: "Only letters and numbers allowed" },
+        section: "company",
+        constraints: { maxLength: 20 },
         autoCapitalize: "uppercase",
     },
     {
@@ -219,7 +238,8 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         visible: true,
         gridSpan: 1,
         order: 8,
-        constraints: { maxLength: 6, minLength: 6, pattern: "^[0-9]{6}$", patternMessage: "Must be exactly 6 digits" },
+        section: "company",
+        constraints: { maxLength: 6, minLength: 6 },
         inputMode: "numeric",
     },
     {
@@ -231,6 +251,7 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         visible: true,
         gridSpan: 2,
         order: 9,
+        section: "company",
         constraints: { maxLength: 150, minLength: 1 },
     },
     {
@@ -242,6 +263,7 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         visible: true,
         gridSpan: 1,
         order: 10,
+        section: "company",
         constraints: {},
     },
     {
@@ -253,17 +275,19 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         visible: true,
         gridSpan: 1,
         order: 11,
+        section: "company",
         constraints: {},
     },
     {
         fieldId: "serviceMode",
-        label: "Service Mode",
+        label: "Service Modes",
         placeholder: "",
         type: "buttons",
         required: true,
         visible: true,
         gridSpan: 1,
         order: 12,
+        section: "company",
         constraints: {},
         options: [
             { value: "FTL", label: "FTL" },
@@ -279,8 +303,174 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         visible: true,
         gridSpan: 1,
         order: 13,
+        section: "company",
         constraints: { min: 1, max: 5, step: 0.1 },
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SECTION 2: Transport & Volumetric Configuration
+    // ═══════════════════════════════════════════════════════════════════════════
+    {
+        fieldId: "transportMode",
+        label: "Transport Mode",
+        placeholder: "",
+        type: "dropdown",
+        required: true,
+        visible: true,
+        gridSpan: 1,
+        order: 14,
+        section: "transport",
+        constraints: {},
+        options: [
+            { value: "road", label: "Road" },
+            { value: "air", label: "Air" },
+            { value: "rail", label: "Rail" },
+            { value: "ship", label: "Ship" },
+        ],
+    },
+    {
+        fieldId: "volumetricUnit",
+        label: "Volumetric Unit",
+        placeholder: "",
+        type: "buttons",
+        required: true,
+        visible: true,
+        gridSpan: 2,
+        order: 15,
+        section: "transport",
+        constraints: {},
+        options: [
+            { value: "cm", label: "Centimeters (cm)" },
+            { value: "in", label: "Inches (in)" },
+        ],
+    },
+    {
+        fieldId: "volumetricDivisor",
+        label: "Volumetric Divisor",
+        placeholder: "Select Volumetric Divisor",
+        type: "dropdown",
+        required: true,
+        visible: true,
+        gridSpan: 1,
+        order: 16,
+        section: "transport",
+        constraints: {},
+        options: [
+            { value: "2800", label: "2800" },
+            { value: "4500", label: "4500" },
+            { value: "5000", label: "5000" },
+            { value: "6000", label: "6000" },
+        ],
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SECTION 3: Basic Charges
+    // ═══════════════════════════════════════════════════════════════════════════
+    {
+        fieldId: "docketCharges",
+        label: "Docket Charges",
+        placeholder: "",
+        type: "number",
+        required: true,
+        visible: true,
+        gridSpan: 1,
+        order: 17,
+        section: "charges",
+        constraints: { min: 0, max: 100000 },
+        suffix: "₹",
+    },
+    {
+        fieldId: "minWeightKg",
+        label: "Min Chargeable Weight",
+        placeholder: "",
+        type: "number",
+        required: false,
+        visible: true,
+        gridSpan: 1,
+        order: 18,
+        section: "charges",
+        constraints: { min: 0, max: 100000 },
+        suffix: "KG",
+    },
+    {
+        fieldId: "minimumCharges",
+        label: "Minimum Charges",
+        placeholder: "",
+        type: "number",
+        required: false,
+        visible: true,
+        gridSpan: 1,
+        order: 19,
+        section: "charges",
+        constraints: { min: 0, max: 100000 },
+        suffix: "₹",
+    },
+    {
+        fieldId: "hamaliCharges",
+        label: "Hamali Charges",
+        placeholder: "",
+        type: "number",
+        required: false,
+        visible: true,
+        gridSpan: 1,
+        order: 20,
+        section: "charges",
+        constraints: { min: 0, max: 100000 },
+        suffix: "₹",
+    },
+    {
+        fieldId: "greenTax",
+        label: "Green Tax / NGT",
+        placeholder: "",
+        type: "number",
+        required: false,
+        visible: true,
+        gridSpan: 1,
+        order: 21,
+        section: "charges",
+        constraints: { min: 0, max: 100000 },
+        suffix: "₹",
+    },
+    {
+        fieldId: "miscCharges",
+        label: "MISC / AOC Charges",
+        placeholder: "",
+        type: "number",
+        required: false,
+        visible: true,
+        gridSpan: 1,
+        order: 22,
+        section: "charges",
+        constraints: { min: 0, max: 100000 },
+        suffix: "₹",
+    },
+    {
+        fieldId: "fuelSurchargePct",
+        label: "Fuel Surcharge",
+        placeholder: "Select or type 0-50",
+        type: "number",
+        required: true,
+        visible: true,
+        gridSpan: 1,
+        order: 23,
+        section: "charges",
+        constraints: { min: 0, max: 50 },
+        suffix: "%",
+    },
+    {
+        fieldId: "daccCharges",
+        label: "DACC Charges",
+        placeholder: "",
+        type: "number",
+        required: false,
+        visible: true,
+        gridSpan: 1,
+        order: 24,
+        section: "charges",
+        constraints: { min: 0, max: 100000 },
+        suffix: "₹",
     },
 ];
 
 export default mongoose.model("formConfigs", formConfigSchema);
+
