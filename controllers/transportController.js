@@ -505,6 +505,26 @@ export const calculatePrice = async (req, res) => {
           }
 
           const pr = tuc.prices.priceRate || {};
+
+          // 🔍 DEBUG: Log vendor pricing data for any vendor with "jan" in name (case insensitive)
+          if (tuc.companyName && tuc.companyName.toLowerCase().includes('jan')) {
+            console.log('🔍 [DEBUG ADD JAN] =====================================');
+            console.log(`🔍 [DEBUG] Vendor: "${tuc.companyName}" (_id: ${tuc._id})`);
+            console.log(`🔍 [DEBUG] Route: ${effectiveOriginZone} → ${effectiveDestZone}`);
+            console.log(`🔍 [DEBUG] unitPrice from priceChart: ₹${unitPrice}/kg`);
+            console.log(`🔍 [DEBUG] priceChart content:`, JSON.stringify(tuc.prices?.priceChart));
+            console.log(`🔍 [DEBUG] priceRate.docketCharges: ₹${pr.docketCharges}`);
+            console.log(`🔍 [DEBUG] priceRate.fuel: ${pr.fuel}%`);
+            console.log(`🔍 [DEBUG] priceRate.greenTax: ₹${pr.greenTax}`);
+            console.log(`🔍 [DEBUG] priceRate.daccCharges: ₹${pr.daccCharges}`);
+            console.log(`🔍 [DEBUG] priceRate.miscellanousCharges: ₹${pr.miscellanousCharges}`);
+            console.log(`🔍 [DEBUG] priceRate.minCharges: ₹${pr.minCharges}`);
+            console.log(`🔍 [DEBUG] priceRate.rovCharges:`, pr.rovCharges);
+            console.log(`🔍 [DEBUG] priceRate.handlingCharges:`, pr.handlingCharges);
+            console.log(`🔍 [DEBUG] priceRate.appointmentCharges:`, pr.appointmentCharges);
+            console.log(`🔍 [DEBUG] priceRate.divisor/kFactor: ${pr.divisor ?? pr.kFactor ?? 'default 5000'}`);
+            console.log('🔍 [DEBUG ADD JAN] =====================================');
+          }
           const kFactor = pr.kFactor ?? pr.divisor ?? 5000;
 
           let volumetricWeight = 0;
