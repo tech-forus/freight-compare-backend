@@ -520,10 +520,14 @@ export const calculatePrice = async (req, res) => {
             pr.appointmentCharges?.fixed || 0
           );
 
+          // FIX: minCharges is a FLOOR constraint, not an additive fee
+          // effectiveBaseFreight ensures freight is never below minimum
+          const effectiveBaseFreight = Math.max(baseFreight, minCharges);
+
           const totalChargesBeforeAddon =
-            baseFreight +
+            effectiveBaseFreight +
             docketCharge +
-            minCharges +
+            // minCharges removed - now enforced as floor via effectiveBaseFreight
             greenTax +
             daccCharges +
             miscCharges +
@@ -730,10 +734,14 @@ export const calculatePrice = async (req, res) => {
               pr.appointmentCharges?.fixed || 0
             );
 
+            // FIX: minCharges is a FLOOR constraint, not an additive fee
+            // effectiveBaseFreight ensures freight is never below minimum
+            const effectiveBaseFreight = Math.max(baseFreight, minCharges);
+
             const totalChargesBeforeAddon =
-              baseFreight +
+              effectiveBaseFreight +
               docketCharge +
-              minCharges +
+              // minCharges removed - now enforced as floor via effectiveBaseFreight
               greenTax +
               daccCharges +
               miscCharges +

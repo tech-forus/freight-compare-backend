@@ -54,7 +54,7 @@ export async function calculatePriceData({
       if (!transporter) return null;
 
       const svcFrom = transporter.service.find(e => e.pincode === Number(fromPincode) && !e.isOda);
-      const svcTo   = transporter.service.find(e => e.pincode === Number(toPincode));
+      const svcTo = transporter.service.find(e => e.pincode === Number(toPincode));
       if (!svcFrom || !svcTo) return null;
 
       const unitPrice = tuc.prices.priceChart[fromPincode][svcTo.zone];
@@ -62,24 +62,27 @@ export async function calculatePriceData({
 
       // volumetric weight
       let volW = (length * width * height) /
-               (modeoftransport === 'Road' ? 4500 : 4750);
+        (modeoftransport === 'Road' ? 4500 : 4750);
       volW = (volW * tuc.prices.priceRate.divisor).toFixed(2);
 
       const chargeableWeight = Math.max(volW, actualWeight);
-      const baseFreight      = unitPrice * chargeableWeight;
+      const baseFreight = unitPrice * chargeableWeight;
 
       const pr = tuc.prices.priceRate;
       const compute = (field) =>
         Math.max((pr[field].variable / 100) * baseFreight, pr[field].fixed);
 
+      // FIX: minCharges is a FLOOR constraint, not an additive fee
+      const effectiveBaseFreight = Math.max(baseFreight, pr.minCharges || 0);
+
       const totalCharges =
-        baseFreight +
+        effectiveBaseFreight +
         pr.docketCharges +
-        pr.minCharges +
+        // pr.minCharges removed - now enforced as floor via effectiveBaseFreight
         pr.greenTax +
         pr.daccCharges +
         pr.miscellanousCharges +
-        (pr.fuel / 100) * baseFreight +
+        (pr.fuel / 100) * effectiveBaseFreight +
         compute('rovCharges') +
         compute('insuaranceCharges') +
         (svcTo.isOda
@@ -125,38 +128,41 @@ export async function calculatePriceData({
 
   // 4) Public transporters
   const transporterData = await transporterModel.find();
-  const customerData    = await customerModel.findById(customerID);
-  const isSubscribed    = customerData?.isSubscribed ?? false;
+  const customerData = await customerModel.findById(customerID);
+  const isSubscribed = customerData?.isSubscribed ?? false;
 
   const transporterRaw = await Promise.all(
     transporterData.map(async (data) => {
       const svcFrom = data.service.find(e => e.pincode === Number(fromPincode) && !e.isOda);
-      const svcTo   = data.service.find(e => e.pincode === Number(toPincode));
+      const svcTo = data.service.find(e => e.pincode === Number(toPincode));
       if (!svcFrom || !svcTo) return null;
 
-      const priceData  = await priceModel.findOne({ companyId: data._id });
-      const pr         = priceData.priceRate;
-      const chart      = priceData.zoneRates;
-      const unitPrice  = chart.get(svcFrom.zone)?.[svcTo.zone];
+      const priceData = await priceModel.findOne({ companyId: data._id });
+      const pr = priceData.priceRate;
+      const chart = priceData.zoneRates;
+      const unitPrice = chart.get(svcFrom.zone)?.[svcTo.zone];
       if (!unitPrice) return null;
 
       let volW = (length * width * height) /
-               (modeoftransport === 'Road' ? 4500 : 4750);
+        (modeoftransport === 'Road' ? 4500 : 4750);
       volW = (volW * pr.divisor).toFixed(2);
 
       const chargeableWeight = Math.max(volW, actualWeight);
-      const baseFreight      = unitPrice * chargeableWeight;
+      const baseFreight = unitPrice * chargeableWeight;
       const compute = (field) =>
         Math.max((pr[field].variable / 100) * baseFreight, pr[field].fixed);
 
+      // FIX: minCharges is a FLOOR constraint, not an additive fee
+      const effectiveBaseFreight = Math.max(baseFreight, pr.minCharges || 0);
+
       const totalCharges =
-        baseFreight +
+        effectiveBaseFreight +
         pr.docketCharges +
-        pr.minCharges +
+        // pr.minCharges removed - now enforced as floor via effectiveBaseFreight
         pr.greenTax +
         pr.daccCharges +
         pr.miscellanousCharges +
-        (pr.fuel / 100) * baseFreight +
+        (pr.fuel / 100) * effectiveBaseFreight +
         compute('rovCharges') +
         compute('insuaranceCharges') +
         (svcTo.isOda
