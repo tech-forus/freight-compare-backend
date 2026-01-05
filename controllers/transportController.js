@@ -20,6 +20,7 @@ import {
   validatePincode,
   sanitizeString,
 } from "../utils/validators.js";
+import { validateShipmentDetails } from "../utils/chargeableWeightService.js";
 
 dotenv.config();
 
@@ -252,6 +253,42 @@ export const calculatePrice = async (req, res) => {
         message:
           "Missing required fields. Provide shipment_details or legacy weight/box parameters.",
       });
+    }
+
+    // DIMENSION VALIDATION: Reject zero/negative dimensions to prevent volumetric bypass
+    // This prevents undercharging for bulky but light items
+    if (Array.isArray(shipment_details) && shipment_details.length > 0) {
+      const validation = validateShipmentDetails(shipment_details);
+      if (!validation.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid shipment details: ${validation.error}`,
+          error: 'INVALID_DIMENSIONS',
+        });
+      }
+    } else if (hasLegacy) {
+      // Validate legacy parameters
+      if (length <= 0 || width <= 0 || height <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Dimensions (length, width, height) must be positive numbers',
+          error: 'INVALID_DIMENSIONS',
+        });
+      }
+      if (weight < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Weight must be a non-negative number',
+          error: 'INVALID_WEIGHT',
+        });
+      }
+      if (noofboxes <= 0 || !Number.isInteger(noofboxes)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Number of boxes must be a positive integer',
+          error: 'INVALID_BOX_COUNT',
+        });
+      }
     }
 
     // Calculate distance using Google Maps API (throws error if no route)
