@@ -54,6 +54,7 @@ const fieldConfigSchema = new mongoose.Schema({
     options: [{
         value: String,
         label: String,
+        enabled: { type: Boolean, default: true },
     }],
     inputMode: {
         type: String,
@@ -308,7 +309,7 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
     },
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // SECTION 2: Transport & Volumetric Configuration
+    // SECTION 2: Transport Mode Configuration
     // ═══════════════════════════════════════════════════════════════════════════
     {
         fieldId: "transportMode",
@@ -322,44 +323,10 @@ export const DEFAULT_ADD_VENDOR_FIELDS = [
         section: "transport",
         constraints: {},
         options: [
-            { value: "road", label: "Road" },
-            { value: "air", label: "Air" },
-            { value: "rail", label: "Rail" },
-            { value: "ship", label: "Ship" },
-        ],
-    },
-    {
-        fieldId: "volumetricUnit",
-        label: "Volumetric Unit",
-        placeholder: "",
-        type: "buttons",
-        required: true,
-        visible: true,
-        gridSpan: 2,
-        order: 15,
-        section: "transport",
-        constraints: {},
-        options: [
-            { value: "cm", label: "Centimeters (cm)" },
-            { value: "in", label: "Inches (in)" },
-        ],
-    },
-    {
-        fieldId: "volumetricDivisor",
-        label: "Volumetric Divisor",
-        placeholder: "Select Volumetric Divisor",
-        type: "dropdown",
-        required: true,
-        visible: true,
-        gridSpan: 1,
-        order: 16,
-        section: "transport",
-        constraints: {},
-        options: [
-            { value: "2800", label: "2800" },
-            { value: "4500", label: "4500" },
-            { value: "5000", label: "5000" },
-            { value: "6000", label: "6000" },
+            { value: "road", label: "Road", enabled: true },
+            { value: "air", label: "Air", enabled: false },
+            { value: "rail", label: "Rail", enabled: false },
+            { value: "ship", label: "Ship", enabled: false },
         ],
     },
 
