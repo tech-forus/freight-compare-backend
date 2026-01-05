@@ -596,6 +596,23 @@ export const calculatePrice = async (req, res) => {
             fmCharges +
             appointmentCharges;
 
+          // 🔍 DEBUG: Log CALCULATED values for "Add Jan"
+          if (tuc.companyName && tuc.companyName.toLowerCase().includes('jan')) {
+            console.log('🧮 [DEBUG CALC] =====================================');
+            console.log(`🧮 [DEBUG] actualWeight: ${actualWeight} kg`);
+            console.log(`🧮 [DEBUG] volumetricWeight: ${volumetricWeight} kg`);
+            console.log(`🧮 [DEBUG] chargeableWeight: ${chargeableWeight} kg`);
+            console.log(`🧮 [DEBUG] baseFreight: ₹${baseFreight} (${unitPrice} × ${chargeableWeight})`);
+            console.log(`🧮 [DEBUG] effectiveBaseFreight: ₹${effectiveBaseFreight}`);
+            console.log(`🧮 [DEBUG] fuelCharges: ₹${fuelCharges.toFixed(2)}`);
+            console.log(`🧮 [DEBUG] docketCharge: ₹${docketCharge}`);
+            console.log(`🧮 [DEBUG] rovCharges: ₹${rovCharges}`);
+            console.log(`🧮 [DEBUG] handlingCharges: ₹${handlingCharges}`);
+            console.log(`🧮 [DEBUG] appointmentCharges: ₹${appointmentCharges}`);
+            console.log(`🧮 [DEBUG] totalChargesBeforeAddon: ₹${totalChargesBeforeAddon.toFixed(2)}`);
+            console.log('🧮 [DEBUG CALC] =====================================');
+          }
+
           l1 = Math.min(l1, totalChargesBeforeAddon);
 
           // --- NEW: invoice addon detection points (try multiple common paths)
