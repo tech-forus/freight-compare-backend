@@ -52,18 +52,21 @@ const calculate = async (
     const chargeable = Math.max(volW, actualWeight);
     const baseFreight = unitPrice * chargeable;
 
+    // Enforce minimum charge as floor (not additive fee)
+    const effectiveFreight = Math.max(baseFreight, rateCfg.minCharges || 0);
+
     const extras = [
       rateCfg.docketCharges,
-      rateCfg.minCharges,
+      // rateCfg.minCharges removed - minimum is enforced as floor above
       rateCfg.greenTax,
       rateCfg.daccCharges,
       rateCfg.miscellanousCharges,
-      (rateCfg.fuel / 100) * baseFreight,
-      Math.max((rateCfg.rovCharges.variable / 100) * baseFreight, rateCfg.rovCharges.fixed),
-      Math.max((rateCfg.insuaranceCharges.variable / 100) * baseFreight, rateCfg.insuaranceCharges.fixed),
+      (rateCfg.fuel / 100) * effectiveFreight,
+      Math.max((rateCfg.rovCharges.variable / 100) * effectiveFreight, rateCfg.rovCharges.fixed),
+      Math.max((rateCfg.insuaranceCharges.variable / 100) * effectiveFreight, rateCfg.insuaranceCharges.fixed),
       rateCfg.handlingCharges.fixed + chargeable * (rateCfg.handlingCharges.variable / 100),
-      Math.max((rateCfg.fmCharges.variable / 100) * baseFreight, rateCfg.fmCharges.fixed),
-      Math.max((rateCfg.appointmentCharges.variable / 100) * baseFreight, rateCfg.appointmentCharges.fixed),
+      Math.max((rateCfg.fmCharges.variable / 100) * effectiveFreight, rateCfg.fmCharges.fixed),
+      Math.max((rateCfg.appointmentCharges.variable / 100) * effectiveFreight, rateCfg.appointmentCharges.fixed),
       ...(isOda
         ? [
             rateCfg.odaCharges.fixed +
@@ -72,8 +75,8 @@ const calculate = async (
         : [])
     ];
 
-    const totalCharges = extras.reduce((sum, x) => sum + x, baseFreight);
-    return { chargeableWeight: chargeable, baseFreight, totalCharges };
+    const totalCharges = extras.reduce((sum, x) => sum + x, effectiveFreight);
+    return { chargeableWeight: chargeable, baseFreight: effectiveFreight, totalCharges };
   };
 
   // 3) tied‑up transporters
