@@ -10,7 +10,7 @@ import packingModel from "../model/packingModel.js";
 import ratingModel from "../model/ratingModel.js";
 import PackingList from "../model/packingModel.js"; // Make sure model is imported
 import { calculateDistanceBetweenPincode } from "../utils/distanceService.js";
-import { zoneForPincode } from "../src/utils/pincodeZoneLookup.js";
+import { zoneForPincode, getPincodeData } from "../src/utils/pincodeZoneLookup.js";
 import {
   validateZoneMatrix,
   sanitizeZoneCodes,
@@ -2202,9 +2202,10 @@ export const searchTransporters = async (req, res) => {
     // Search both collections in parallel
     const [publicTransporters, tempTransporters] = await Promise.all([
       // 1. Public transporters (transporterModel)
+      // Note: Field name is 'servicableZones' (not 'selectedZones') and 'service' (not 'serviceability')
       transporterModel
         .find({ $or: searchOr })
-        .select('companyName displayName vendorCode vendorPhone vendorEmail gstNo address state city pincode rating selectedZones zoneConfig')
+        .select('companyName displayName vendorCode vendorPhone vendorEmail gstNo address state city pincode rating servicableZones service')
         .limit(limitNum)
         .lean(),
 
@@ -2229,6 +2230,30 @@ export const searchTransporters = async (req, res) => {
 
     // Add public transporters with source tag
     publicTransporters.forEach(t => {
+      // 🔥 FIX: Public transporters use 'servicableZones' and 'service' fields (not selectedZones/zoneConfig)
+      // Enrich 'service' array with city/state data from pincodes.json
+      const serviceability = (t.service || []).map(s => {
+        // Lookup pincode data to get city and state
+        const pincodeData = getPincodeData(s.pincode);
+
+        return {
+          pincode: String(s.pincode),
+          zone: s.zone,
+          state: pincodeData?.state || '', // ✅ Enriched from pincodes.json
+          city: pincodeData?.city || '',   // ✅ Enriched from pincodes.json
+          isODA: s.isOda || false,
+          active: true
+        };
+      });
+
+      // Extract unique zones from servicableZones or service array
+      let zones = [];
+      if (Array.isArray(t.servicableZones) && t.servicableZones.length > 0) {
+        zones = t.servicableZones;
+      } else if (Array.isArray(t.service) && t.service.length > 0) {
+        zones = [...new Set(t.service.map(s => s.zone))];
+      }
+
       results.push({
         id: t._id?.toString(),
         source: 'public',
@@ -2243,26 +2268,84 @@ export const searchTransporters = async (req, res) => {
         city: t.city,
         pincode: t.pincode,
         rating: t.rating,
-        zones: t.selectedZones || [],
-        zoneConfigs: t.zoneConfig ? Object.keys(t.zoneConfig).map(z => ({
-          zoneCode: z,
-          zoneName: z,
-          region: 'North',
-          selectedStates: [],
-          selectedCities: [],
-          isComplete: false
-        })) : []
+        zones: zones, // Now correctly populated from servicableZones or service array
+        zoneConfigs: [], // Public transporters don't have zoneConfig - use serviceability instead
+        serviceability: serviceability // ✅ Priority 1 data source with enriched city/state from pincodes.json
       });
     });
 
     // Add temporary transporters with source tag - include ALL fields for autofill
     tempTransporters.forEach(t => {
+      // 🔥 FIX: Derive zones from multiple fallback sources
+      // Priority: selectedZones → priceChart keys → zoneConfig keys → serviceability zones
+      let derivedZones = [];
+
+      // Try 1: selectedZones (most authoritative)
+      if (Array.isArray(t.selectedZones) && t.selectedZones.length > 0) {
+        derivedZones = t.selectedZones;
+      }
+      // Try 2: priceChart keys (if selectedZones is empty but pricing exists)
+      else if (t.prices?.priceChart && Object.keys(t.prices.priceChart).length > 0) {
+        derivedZones = Object.keys(t.prices.priceChart);
+      }
+      // Try 3: zoneConfig keys (handle both Map and Object)
+      else if (t.zoneConfig) {
+        // Handle Mongoose Map or plain object
+        const zoneConfigObj = t.zoneConfig instanceof Map
+          ? Object.fromEntries(t.zoneConfig)
+          : t.zoneConfig;
+        if (zoneConfigObj && typeof zoneConfigObj === 'object') {
+          derivedZones = Object.keys(zoneConfigObj);
+        }
+      }
+      // Try 4: Extract unique zones from serviceability
+      else if (Array.isArray(t.serviceability) && t.serviceability.length > 0) {
+        const zoneSet = new Set();
+        t.serviceability.forEach(s => { if (s.zone) zoneSet.add(s.zone); });
+        derivedZones = Array.from(zoneSet);
+      }
+
+      // 🔥 FIX: Handle zoneConfig as Map or Object for zoneConfigs
+      let derivedZoneConfigs = [];
+      if (t.zoneConfigurations && Array.isArray(t.zoneConfigurations)) {
+        derivedZoneConfigs = t.zoneConfigurations;
+      } else if (t.zoneConfig) {
+        const zoneConfigObj = t.zoneConfig instanceof Map
+          ? Object.fromEntries(t.zoneConfig)
+          : t.zoneConfig;
+        if (zoneConfigObj && typeof zoneConfigObj === 'object') {
+          derivedZoneConfigs = Object.keys(zoneConfigObj).map(z => ({
+            zoneCode: z,
+            zoneName: z,
+            region: z.startsWith('N') ? 'North' : z.startsWith('S') ? 'South' :
+              z.startsWith('E') ? 'East' : z.startsWith('W') ? 'West' :
+                z.startsWith('C') ? 'Central' : 'Other',
+            selectedStates: [],
+            selectedCities: zoneConfigObj[z] || [], // Include pincodes as "cities" for display
+            isComplete: true
+          }));
+        }
+      }
+      // Fallback: build from derivedZones if zoneConfigs still empty
+      if (derivedZoneConfigs.length === 0 && derivedZones.length > 0) {
+        derivedZoneConfigs = derivedZones.map(z => ({
+          zoneCode: z,
+          zoneName: z,
+          region: z.startsWith('N') ? 'North' : z.startsWith('S') ? 'South' :
+            z.startsWith('E') ? 'East' : z.startsWith('W') ? 'West' :
+              z.startsWith('C') ? 'Central' : 'Other',
+          selectedStates: [],
+          selectedCities: [],
+          isComplete: false
+        }));
+      }
+
       results.push({
         id: t._id?.toString(),
         source: 'temporary',
         companyName: t.companyName,
         displayName: t.displayName || t.companyName,
-        contactPersonName: t.contactPersonName || '',  // ✅ FIX: Send as contactPersonName (not primaryContactName)
+        contactPersonName: t.contactPersonName || '',
         vendorCode: t.vendorCode,
         vendorPhone: t.vendorPhone,
         vendorEmail: t.vendorEmail,
@@ -2273,20 +2356,14 @@ export const searchTransporters = async (req, res) => {
         city: t.city,
         pincode: t.pincode,
         // Transport mode (Road/Surface/Air/Rail) - send as 'mode' for frontend compatibility
-        mode: t.transportMode || 'Road',  // ✅ FIX: Send as 'mode' (frontend expects this field)
+        mode: t.transportMode || 'Road',
         // Service mode (FTL/LTL/PTL)
         serviceMode: t.serviceMode || '',
         rating: t.rating,
         approvalStatus: t.approvalStatus || 'pending',
-        zones: t.selectedZones || [],
-        zoneConfigs: t.zoneConfigurations || (t.zoneConfig ? Object.keys(t.zoneConfig).map(z => ({
-          zoneCode: z,
-          zoneName: z,
-          region: 'North',
-          selectedStates: [],
-          selectedCities: [],
-          isComplete: false
-        })) : []),
+        // 🔥 FIX: Use derived zones with robust fallback
+        zones: derivedZones,
+        zoneConfigs: derivedZoneConfigs,
         // Volumetric settings
         volumetricUnit: t.volumetricUnit || 'cm',
         // NOTE: divisor is now ONLY in prices.priceRate.divisor (removed root-level fallback)
