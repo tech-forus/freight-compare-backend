@@ -22,7 +22,8 @@ import {
   deleteZoneMatrix,
   saveWizardData,
   getWizardData,
-  searchTransporters  // NEW: Quick Lookup search
+  searchTransporters,  // Quick Lookup search (minimal data)
+  getTransporterForAutofill  // NEW: Lazy-load full details on selection
 } from '../controllers/transportController.js';
 
 import {
@@ -55,7 +56,8 @@ router.post("/auth/signin", authLimiter, transporterLogin);
 
 // Calculator & add vendor
 router.post('/calculate', protect, calculatePrice);
-router.get('/search-transporters', protect, searchTransporters);  // NEW: Quick Lookup search
+router.get('/search-transporters', protect, searchTransporters);  // Fast search - minimal data
+router.get('/transporter-for-autofill', protect, getTransporterForAutofill);  // NEW: Lazy-load full details
 router.post("/addtiedupcompanies", protect, upload.single('priceChart'), addTiedUpCompany);
 router.post("/add-tied-up", protect, addTiedUpCompany);
 
