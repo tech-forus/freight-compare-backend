@@ -10,7 +10,7 @@ import packingModel from "../model/packingModel.js";
 import ratingModel from "../model/ratingModel.js";
 import PackingList from "../model/packingModel.js"; // Make sure model is imported
 import { calculateDistanceBetweenPincode } from "../utils/distanceService.js";
-import { zoneForPincode, getPincodeData } from "../src/utils/pincodeZoneLookup.js";
+import { zoneForPincode } from "../src/utils/pincodeZoneLookup.js";
 import {
   validateZoneMatrix,
   sanitizeZoneCodes,
@@ -2169,9 +2169,17 @@ export const updateTemporaryTransporter = async (req, res) => {
 // SEARCH TRANSPORTERS - For Quick Lookup on Add Vendor page
 // Searches both public transporters AND temporary transporters (tied-up vendors)
 // ==============================================================================
+// ==============================================================================
+// SEARCH TRANSPORTERS - Fixed with logging
+// ==============================================================================
 export const searchTransporters = async (req, res) => {
+  const reqId = Date.now();
+  
   try {
     const { query, customerID, limit = 10 } = req.query;
+    
+    // LOG 1: Request received
+    console.log(`\n[SEARCH-${reqId}] Query: "${query}" | CustomerID: ${customerID} | Limit: ${limit}`);
 
     if (!query || query.length < 2) {
       return res.status(400).json({
@@ -2183,10 +2191,6 @@ export const searchTransporters = async (req, res) => {
     const searchRegex = new RegExp(query, 'i');
     const limitNum = Math.min(parseInt(limit) || 10, 50);
 
-    // DEBUG: Log search parameters
-    console.log('[searchTransporters] Search params:', { query, customerID, limitNum });
-
-    // Build search criteria - search across multiple fields (case-insensitive)
     const searchOr = [
       { companyName: searchRegex },
       { vendorCode: searchRegex },
@@ -2194,23 +2198,18 @@ export const searchTransporters = async (req, res) => {
       { displayName: searchRegex }
     ];
 
-    // Build temp transporter query with proper $and combination
     const tempQuery = customerID
       ? { $and: [{ $or: searchOr }, { customerID: customerID }] }
       : { $or: searchOr };
 
-    // Search both collections in parallel
+    // Search both collections
     const [publicTransporters, tempTransporters] = await Promise.all([
-      // 1. Public transporters (transporterModel)
-      // Note: Field name is 'servicableZones' (not 'selectedZones') and 'service' (not 'serviceability')
       transporterModel
         .find({ $or: searchOr })
-        .select('companyName displayName vendorCode vendorPhone vendorEmail gstNo address state city pincode rating servicableZones service')
+        .select('companyName displayName vendorCode vendorPhone vendorEmail gstNo address state city pincode rating selectedZones serviceZones serviceableZones servicableZones zoneConfig service')
         .limit(limitNum)
         .lean(),
 
-      // 2. Temporary transporters (tied-up vendors) - filter by customerID
-      // Only show vendors that belong to the current logged-in user
       temporaryTransporterModel
         .find(tempQuery)
         .select('companyName contactPersonName displayName vendorCode vendorPhone vendorEmail gstNo subVendor address state city pincode transportMode serviceMode volumetricUnit cftFactor rating selectedZones zoneConfig zoneConfigurations approvalStatus prices serviceability serviceabilityChecksum serviceabilitySource')
@@ -2218,98 +2217,143 @@ export const searchTransporters = async (req, res) => {
         .lean()
     ]);
 
-    // DEBUG: Log search results count
-    console.log('[searchTransporters] Results:', {
-      publicCount: publicTransporters.length,
-      tempCount: tempTransporters.length,
-      tempNames: tempTransporters.map(t => t.companyName)
-    });
+    // LOG 2: Results count
+    console.log(`[SEARCH-${reqId}] Found: ${publicTransporters.length} public, ${tempTransporters.length} temporary`);
 
-    // Transform and combine results
     const results = [];
 
-    // Add public transporters with source tag
-    publicTransporters.forEach(t => {
-      // 🔥 PERFORMANCE: For search results, DON'T process all 7123 service entries!
-      // Just include zones array - frontend handles enrichment on selection
+    // Process PUBLIC transporters
+    // Process PUBLIC transporters
+publicTransporters.forEach(t => {
+  // FIX: Get zones from correct fields
+  const zones = t.serviceZones || t.serviceableZones || t.servicableZones || t.selectedZones || [];
+  const zoneConfigKeys = Object.keys(t.zoneConfig || {});
+  const finalZones = zones.length > 0 ? zones : zoneConfigKeys;
+  
+  // FIX: Send service array for smart enrichment on frontend
+  const serviceability = (t.service || []).map(s => {
+    if (typeof s === 'string') {
+      return { pincode: s, zone: '', state: '', city: '', isODA: false };
+    }
+    return {
+      pincode: String(s.pincode || s.Pincode || ''),
+      zone: String(s.zone || s.Zone || '').toUpperCase(),
+      state: s.state || s.State || '',
+      city: s.city || s.City || '',
+      isODA: s.isODA || s.IsODA || false,
+    };
+  });
+  
+  results.push({
+    id: t._id?.toString(),
+    source: 'public',
+    isTemporary: false,
+    companyName: t.companyName,
+    legalCompanyName: t.companyName,
+    displayName: t.displayName || t.companyName,
+    vendorCode: t.vendorCode,
+    vendorPhone: t.vendorPhone,
+    vendorEmail: t.vendorEmail,
+    gstNo: t.gstNo,
+    address: t.address,
+    state: t.state,
+    city: t.city,
+    pincode: t.pincode,
+    rating: t.rating,
+    zones: finalZones.map(z => String(z).toUpperCase()),
+    zoneConfigs: finalZones.map(z => ({
+      zoneCode: String(z).toUpperCase(),
+      zoneName: String(z).toUpperCase(),
+      region: String(z).startsWith('N') ? 'North' : 
+              String(z).startsWith('S') ? 'South' : 
+              String(z).startsWith('E') ? 'East' : 
+              String(z).startsWith('W') ? 'West' : 'Central',
+      selectedStates: [],
+      selectedCities: [],
+      isComplete: false
+    })),
+    // CRITICAL: Send serviceability for smart enrichment
+    serviceability: serviceability,
+    serviceabilityCount: t.service?.length || 0,
+    hasRichPincodeData: (t.service?.length || 0) >= 50,
+  });
+});
 
-      // Extract unique zones from servicableZones or service array (fast O(n) but no enrichment)
-      let zones = [];
-      if (Array.isArray(t.servicableZones) && t.servicableZones.length > 0) {
-        zones = t.servicableZones;
-      } else if (Array.isArray(t.service) && t.service.length > 0) {
-        zones = [...new Set(t.service.map(s => s.zone))];
+    // Process TEMPORARY transporters
+    tempTransporters.forEach((t, idx) => {
+      // LOG 4: Each temp transporter
+      console.log(`[SEARCH-${reqId}] [TEMP-${idx}] ${t.companyName} | zones: ${t.selectedZones?.length || 0} | serviceability: ${t.serviceability?.length || 0} | priceChart: ${Object.keys(t.prices?.priceChart || {}).length}`);
+      
+      // Build zoneConfigs from various sources
+      let zoneConfigs = [];
+      if (t.zoneConfigurations?.length > 0) {
+        zoneConfigs = t.zoneConfigurations;
+      } else if (t.zoneConfig) {
+        const zc = t.zoneConfig instanceof Map ? Object.fromEntries(t.zoneConfig) : t.zoneConfig;
+        zoneConfigs = Object.keys(zc).map(z => ({
+          zoneCode: z,
+          zoneName: z,
+          region: z.startsWith('N') ? 'North' : z.startsWith('S') ? 'South' : z.startsWith('E') ? 'East' : z.startsWith('W') ? 'West' : 'Central',
+          selectedStates: [],
+          selectedCities: [],
+          isComplete: false
+        }));
       }
-
+      
       results.push({
         id: t._id?.toString(),
-        source: 'public',
+        source: 'temporary',
+        isTemporary: true,
         companyName: t.companyName,
+        legalCompanyName: t.companyName,
         displayName: t.displayName || t.companyName,
+        contactPersonName: t.contactPersonName || '',
         vendorCode: t.vendorCode,
         vendorPhone: t.vendorPhone,
         vendorEmail: t.vendorEmail,
         gstNo: t.gstNo,
+        subVendor: t.subVendor || '',
         address: t.address,
         state: t.state,
         city: t.city,
         pincode: t.pincode,
+        mode: t.transportMode || 'Road',
+        transportMode: t.transportMode || 'Road',
+        serviceMode: t.serviceMode || '',
         rating: t.rating,
-        zones: zones,
-        zoneConfigs: [],
-        // 🔥 DON'T include serviceability in search - too slow for 7123 entries!
-        // Frontend will use zones array to build empty matrix, then user fills prices
-        serviceability: [],
-        serviceCount: t.service?.length || 0  // Just include count for display
-      });
-    });
-
-    // Add temporary transporters with source tag - MINIMAL data for fast search
-    tempTransporters.forEach(t => {
-      // 🔥 PERFORMANCE: Only derive zone count for display, not full zone configs
-      let zoneCount = 0;
-      if (Array.isArray(t.selectedZones) && t.selectedZones.length > 0) {
-        zoneCount = t.selectedZones.length;
-      } else if (t.prices?.priceChart && Object.keys(t.prices.priceChart).length > 0) {
-        zoneCount = Object.keys(t.prices.priceChart).length;
-      } else if (Array.isArray(t.serviceability) && t.serviceability.length > 0) {
-        const zoneSet = new Set();
-        t.serviceability.forEach(s => { if (s.zone) zoneSet.add(s.zone); });
-        zoneCount = zoneSet.size;
-      }
-
-      results.push({
-        id: t._id?.toString(),
-        source: 'temporary',
-        companyName: t.companyName,
-        displayName: t.displayName || t.companyName,
-        vendorCode: t.vendorCode,
-        // 🔥 MINIMAL: Only zone count, not full arrays - fetch on selection
-        zoneCount: zoneCount,
         approvalStatus: t.approvalStatus || 'pending',
+        zones: t.selectedZones || [],
+        zoneConfigs: zoneConfigs,
+        volumetricUnit: t.volumetricUnit || 'cm',
+        cftFactor: t.cftFactor || null,
+        charges: {
+          ...(t.prices?.priceRate || {}),
+          divisor: t.prices?.priceRate?.divisor || 5000,
+        },
+        priceChart: t.prices?.priceChart || {},
+        invoiceValueCharges: t.prices?.invoiceValueCharges || {},
+        serviceability: t.serviceability || [],
+        serviceabilityChecksum: t.serviceabilityChecksum || '',
+        serviceabilitySource: t.serviceabilitySource || '',
       });
     });
 
-    // Sort by relevance (exact match first, then starts with, then contains)
+    // Sort by relevance
     const lowerQuery = query.toLowerCase();
     results.sort((a, b) => {
       const aName = (a.companyName || '').toLowerCase();
       const bName = (b.companyName || '').toLowerCase();
-
-      // Exact match first
       if (aName === lowerQuery && bName !== lowerQuery) return -1;
       if (bName === lowerQuery && aName !== lowerQuery) return 1;
-
-      // Starts with second
       if (aName.startsWith(lowerQuery) && !bName.startsWith(lowerQuery)) return -1;
       if (bName.startsWith(lowerQuery) && !aName.startsWith(lowerQuery)) return 1;
-
-      // Alphabetical
       return aName.localeCompare(bName);
     });
 
-    // Limit final results
     const finalResults = results.slice(0, limitNum);
+
+    // LOG 5: Final response
+    console.log(`[SEARCH-${reqId}] Returning ${finalResults.length} results\n`);
 
     return res.status(200).json({
       success: true,
@@ -2323,195 +2367,10 @@ export const searchTransporters = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('[searchTransporters] Error:', error);
+    console.error(`[SEARCH-${reqId}] ERROR:`, error.message);
     return res.status(500).json({
       success: false,
       message: error.message || "Search failed"
-    });
-  }
-};
-
-// ==============================================================================
-// GET TRANSPORTER FOR AUTOFILL - Fetches full details when user selects from dropdown
-// This is the lazy-load endpoint - called ONLY when user clicks on a transporter
-// ==============================================================================
-export const getTransporterForAutofill = async (req, res) => {
-  try {
-    const { id, source } = req.query;
-
-    if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: "Transporter ID is required"
-      });
-    }
-
-    console.log('[getTransporterForAutofill] Fetching:', { id, source });
-
-    let result = null;
-
-    // Check source type to determine which collection to query
-    if (source === 'public') {
-      // Fetch from public transporters
-      const t = await transporterModel.findById(id).lean();
-
-      if (!t) {
-        return res.status(404).json({ success: false, message: "Transporter not found" });
-      }
-
-      // 🔥 NOW we do the full enrichment (only for selected transporter, not all search results)
-      const serviceMap = new Map();
-      (t.service || []).forEach(s => {
-        const pincodeData = getPincodeData(s.pincode);
-        const city = pincodeData?.city || '';
-        const state = pincodeData?.state || '';
-        const zone = s.zone || '';
-
-        const key = `${zone}||${city}||${state}`;
-        if (city && !serviceMap.has(key)) {
-          serviceMap.set(key, {
-            pincode: String(s.pincode),
-            zone: zone,
-            state: state,
-            city: city,
-            isODA: s.isOda || false,
-            active: true
-          });
-        }
-      });
-      const serviceability = Array.from(serviceMap.values());
-
-      let zones = [];
-      if (Array.isArray(t.servicableZones) && t.servicableZones.length > 0) {
-        zones = t.servicableZones;
-      } else if (Array.isArray(t.service) && t.service.length > 0) {
-        zones = [...new Set(t.service.map(s => s.zone))];
-      }
-
-      result = {
-        id: t._id?.toString(),
-        source: 'public',
-        companyName: t.companyName,
-        displayName: t.displayName || t.companyName,
-        vendorCode: t.vendorCode,
-        vendorPhone: t.phone,
-        vendorEmail: t.email,
-        gstNo: t.gstNo,
-        address: t.address,
-        state: t.state,
-        city: t.city,
-        pincode: t.pincode,
-        rating: t.rating || 3,
-        zones: zones,
-        zoneConfigs: [],
-        serviceability: serviceability,
-        serviceCount: t.service?.length || 0
-      };
-
-    } else {
-      // Fetch from temporary transporters
-      const t = await temporaryTransporterModel.findById(id).lean();
-
-      if (!t) {
-        return res.status(404).json({ success: false, message: "Vendor not found" });
-      }
-
-      // Derive zones from multiple sources
-      let derivedZones = [];
-      if (Array.isArray(t.selectedZones) && t.selectedZones.length > 0) {
-        derivedZones = t.selectedZones;
-      } else if (t.prices?.priceChart && Object.keys(t.prices.priceChart).length > 0) {
-        derivedZones = Object.keys(t.prices.priceChart);
-      } else if (t.zoneConfig) {
-        const zoneConfigObj = t.zoneConfig instanceof Map
-          ? Object.fromEntries(t.zoneConfig)
-          : t.zoneConfig;
-        if (zoneConfigObj && typeof zoneConfigObj === 'object') {
-          derivedZones = Object.keys(zoneConfigObj);
-        }
-      } else if (Array.isArray(t.serviceability) && t.serviceability.length > 0) {
-        const zoneSet = new Set();
-        t.serviceability.forEach(s => { if (s.zone) zoneSet.add(s.zone); });
-        derivedZones = Array.from(zoneSet);
-      }
-
-      // Build zone configs
-      let derivedZoneConfigs = [];
-      if (t.zoneConfigurations && Array.isArray(t.zoneConfigurations)) {
-        derivedZoneConfigs = t.zoneConfigurations;
-      } else if (t.zoneConfig) {
-        const zoneConfigObj = t.zoneConfig instanceof Map
-          ? Object.fromEntries(t.zoneConfig)
-          : t.zoneConfig;
-        if (zoneConfigObj && typeof zoneConfigObj === 'object') {
-          derivedZoneConfigs = Object.keys(zoneConfigObj).map(z => ({
-            zoneCode: z,
-            zoneName: z,
-            region: z.startsWith('N') ? 'North' : z.startsWith('S') ? 'South' :
-              z.startsWith('E') ? 'East' : z.startsWith('W') ? 'West' :
-                z.startsWith('C') ? 'Central' : 'Other',
-            selectedStates: [],
-            selectedCities: zoneConfigObj[z] || [],
-            isComplete: true
-          }));
-        }
-      }
-      if (derivedZoneConfigs.length === 0 && derivedZones.length > 0) {
-        derivedZoneConfigs = derivedZones.map(z => ({
-          zoneCode: z,
-          zoneName: z,
-          region: z.startsWith('N') ? 'North' : z.startsWith('S') ? 'South' :
-            z.startsWith('E') ? 'East' : z.startsWith('W') ? 'West' :
-              z.startsWith('C') ? 'Central' : 'Other',
-          selectedStates: [],
-          selectedCities: [],
-          isComplete: false
-        }));
-      }
-
-      result = {
-        id: t._id?.toString(),
-        source: 'temporary',
-        companyName: t.companyName,
-        displayName: t.displayName || t.companyName,
-        contactPersonName: t.contactPersonName || '',
-        vendorCode: t.vendorCode,
-        vendorPhone: t.vendorPhone,
-        vendorEmail: t.vendorEmail,
-        gstNo: t.gstNo,
-        subVendor: t.subVendor || '',
-        address: t.address,
-        state: t.state,
-        city: t.city,
-        pincode: t.pincode,
-        mode: t.transportMode || 'Road',
-        serviceMode: t.serviceMode || '',
-        rating: t.rating,
-        approvalStatus: t.approvalStatus || 'pending',
-        zones: derivedZones,
-        zoneConfigs: derivedZoneConfigs,
-        volumetricUnit: t.volumetricUnit || 'cm',
-        divisor: t.prices?.priceRate?.divisor || 5000,
-        cftFactor: t.cftFactor || null,
-        charges: t.prices?.priceRate || {},
-        priceChart: t.prices?.priceChart || {},
-        invoiceValueCharges: t.prices?.invoiceValueCharges || {},
-        serviceability: t.serviceability || [],
-        serviceabilityChecksum: t.serviceabilityChecksum || '',
-        serviceabilitySource: t.serviceabilitySource || '',
-      };
-    }
-
-    return res.status(200).json({
-      success: true,
-      data: result
-    });
-
-  } catch (error) {
-    console.error('[getTransporterForAutofill] Error:', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to fetch transporter details"
     });
   }
 };
