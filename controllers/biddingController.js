@@ -111,7 +111,14 @@ const calculate = async (
 
   // 4) public transporters
   const customer = await customerModel.findById(customerID);
-  const allTrans = await transporterModel.find();
+  // Filter out test/dummy transporters
+  const allTrans = await transporterModel.find({
+    companyName: {
+      $not: {
+        $regex: /test|tester|dummy|vellore/i
+      }
+    }
+  });
   for (const t of allTrans) {
     const svcFrom = t.service.find(e => e.pincode === Number(fromPincode));
     const svcTo   = t.service.find(e => e.pincode === Number(toPincode));
