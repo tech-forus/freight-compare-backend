@@ -2297,10 +2297,13 @@ export const searchTransporters = async (req, res) => {
         zoneConfigs: finalZones.map(z => ({
           zoneCode: String(z).toUpperCase(),
           zoneName: String(z).toUpperCase(),
-          region: String(z).startsWith('N') ? 'North' :
-            String(z).startsWith('S') ? 'South' :
-              String(z).startsWith('E') ? 'East' :
-                String(z).startsWith('W') ? 'West' : 'Central',
+          region: String(z).startsWith('NE') ? 'Northeast' :
+            String(z).startsWith('N') ? 'North' :
+              String(z).startsWith('S') ? 'South' :
+                String(z).startsWith('E') ? 'East' :
+                  String(z).startsWith('W') ? 'West' :
+                    String(z).startsWith('X') ? 'Special' :
+                      String(z).startsWith('C') ? 'Central' : 'North',
           selectedStates: [],
           selectedCities: [],
           isComplete: false
@@ -2326,7 +2329,7 @@ export const searchTransporters = async (req, res) => {
         zoneConfigs = Object.keys(zc).map(z => ({
           zoneCode: z,
           zoneName: z,
-          region: z.startsWith('N') ? 'North' : z.startsWith('S') ? 'South' : z.startsWith('E') ? 'East' : z.startsWith('W') ? 'West' : 'Central',
+          region: z.startsWith('NE') ? 'Northeast' : z.startsWith('N') ? 'North' : z.startsWith('S') ? 'South' : z.startsWith('E') ? 'East' : z.startsWith('W') ? 'West' : z.startsWith('X') ? 'Special' : z.startsWith('C') ? 'Central' : 'North',
           selectedStates: [],
           selectedCities: [],
           isComplete: false
