@@ -401,7 +401,7 @@ export const calculatePrice = async (req, res) => {
               }
             }
           })
-          .select('_id companyName servicableZones')
+          .select('_id companyName servicableZones phone email')
           .lean()
           .maxTimeMS(10000)
           .exec()
@@ -902,6 +902,9 @@ export const calculatePrice = async (req, res) => {
               servicePincodeCount: data.service?.length || 0,
               // Public transporters are pre-verified by the system - show as "Verified" in UI
               approvalStatus: 'approved',
+              // Contact information for "Contact Now" feature
+              phone: data.phone || null,
+              email: data.email || null,
             };
           } catch (error) {
             console.error(`  [ERROR] Failed processing ${data.companyName}:`, error.message);
