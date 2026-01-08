@@ -350,7 +350,7 @@ export const calculatePrice = async (req, res) => {
         temporaryTransporterModel.aggregate([
           {
             $match: {
-              customerID: new mongoose.Types.ObjectId(customerID),
+              // REMOVED customerID filter - show all vendors to all users (public marketplace)
               $or: [
                 { approvalStatus: "approved" },
                 { approvalStatus: { $exists: false } }
@@ -679,6 +679,8 @@ export const calculatePrice = async (req, res) => {
 
             isHidden: false,
             isTemporaryTransporter: true,
+            // Flag to distinguish user's own vendors from others
+            isTiedUp: tuc.customerID && tuc.customerID.toString() === customerID.toString(),
             // Zone configuration for Service Zones modal
             selectedZones: tuc.selectedZones || [],
             zoneConfig: tuc.zoneConfig || {},
