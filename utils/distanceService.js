@@ -68,8 +68,13 @@ export const calculateDistanceBetweenPincode = async (originPincode, destination
   }
 
   // Call Google Maps API
+  // Add ", India" suffix to help Google geocode Indian pincodes correctly
+  // Without this, pincodes like "370007" may return ZERO_RESULTS
+  const originFormatted = `${origin}, India`;
+  const destinationFormatted = `${destination}, India`;
+
   try {
-    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&key=${key}&mode=driving&region=in`;
+    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(originFormatted)}&destinations=${encodeURIComponent(destinationFormatted)}&key=${key}&mode=driving&region=in`;
     const { data } = await axios.get(url, { timeout: 8000 });
 
     if (data.status !== 'OK') {
