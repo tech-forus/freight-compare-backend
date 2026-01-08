@@ -41,16 +41,20 @@ export const calculateDistanceBetweenPincode = async (originPincode, destination
     return { estTime: cached.estTime, distance: cached.distance, distanceKm: cached.distanceKm };
   }
 
-  // Validate pincodes exist
-  if (!pinMap[origin]) {
-    const err = new Error(`Origin pincode ${origin} not found in database`);
-    err.code = 'PINCODE_NOT_FOUND';
+  // SIMPLIFIED VALIDATION: Check format only, let Google Maps handle geocoding
+  // Previously checked against pincode_centroids.json but that file was missing 2,633 pincodes
+  // Google Maps API can geocode any valid Indian pincode directly
+  const isValidFormat = (pin) => /^[1-9]\d{5}$/.test(pin);
+
+  if (!isValidFormat(origin)) {
+    const err = new Error(`Invalid origin pincode format: ${origin}. Must be 6 digits starting with 1-9.`);
+    err.code = 'INVALID_PINCODE_FORMAT';
     err.field = 'origin';
     throw err;
   }
-  if (!pinMap[destination]) {
-    const err = new Error(`Destination pincode ${destination} not found in database`);
-    err.code = 'PINCODE_NOT_FOUND';
+  if (!isValidFormat(destination)) {
+    const err = new Error(`Invalid destination pincode format: ${destination}. Must be 6 digits starting with 1-9.`);
+    err.code = 'INVALID_PINCODE_FORMAT';
     err.field = 'destination';
     throw err;
   }
