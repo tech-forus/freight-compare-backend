@@ -1383,6 +1383,47 @@ export const getTemporaryTransporters = async (req, res) => {
   }
 };
 
+/**
+ * Get a single temporary transporter by ID
+ * GET /api/transporter/temporary/:id
+ */
+export const getTemporaryTransporterById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "Transporter ID is required",
+      });
+    }
+
+    const transporter = await temporaryTransporterModel
+      .findById(id)
+      .select('-serviceability -zoneConfig') // Exclude large fields for performance
+      .lean();
+
+    if (!transporter) {
+      return res.status(404).json({
+        success: false,
+        message: "Temporary transporter not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Temporary transporter fetched successfully",
+      data: transporter,
+    });
+  } catch (error) {
+    console.error("[BACKEND] Error fetching temporary transporter by ID:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
 export const updateTemporaryTransporterStatus = async (req, res) => {
   try {
     const { id } = req.params;

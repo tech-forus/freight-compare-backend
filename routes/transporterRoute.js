@@ -9,6 +9,7 @@ import {
   getPackingList,
   getTiedUpCompanies,
   getTemporaryTransporters,
+  getTemporaryTransporterById,
   updateTemporaryTransporterStatus,
   updateTemporaryTransporter,
   getTransporters,
@@ -74,6 +75,7 @@ router.get('/temporary', protect, (req, res, next) => {
   return getTemporaryTransporters(req, res, next);
 });
 router.get("/gettemporarytransporters", protect, getTemporaryTransporters);
+router.get("/temporary/:id", protect, getTemporaryTransporterById);  // Get single by ID - must be before PUT routes
 router.put("/temporary/:id", protect, updateTemporaryTransporter);
 router.put("/temporary/:id/status", protect, updateTemporaryTransporterStatus);
 
