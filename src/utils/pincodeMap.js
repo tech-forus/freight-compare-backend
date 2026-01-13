@@ -26,4 +26,7 @@ rawCentroids.forEach((entry) => {
   }
 });
 
+// Log successful load
+console.log(`✅ Centroids loaded: ${Object.keys(pinMap).length} pincodes`);
+
 export default pinMap;

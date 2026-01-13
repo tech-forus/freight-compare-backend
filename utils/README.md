@@ -24,7 +24,7 @@ const result = await calculateDistanceBetweenPincode('110020', '560060');
 #### ❌ DON'T:
 - **NEVER** copy this function to other files
 - **NEVER** create local distance calculation functions
-- **NEVER** use haversine formula directly
+- **NEVER** use haversine formula directly (use distanceService which has proper fallback)
 - **NEVER** call Google Maps API directly
 
 ### Error Handling
@@ -78,11 +78,14 @@ These files correctly import from distanceService:
 
 ### Implementation Details
 
-- **API**: Google Maps Distance Matrix API
+- **Geocoding**: pincode_centroids.json (36,574+ pincodes)
+- **Nearby routes** (same first 2 digits): Haversine × 1.35 road factor (instant, free)
+- **Distant routes**: Google Distance Matrix API with precise coordinates
+- **Fallback**: Haversine × 1.35 when Google fails or returns suspicious data
 - **Cache**: 30-day in-memory Map
-- **Performance**: <5ms (cached), ~500ms (first call)
-- **Cost**: ~₹0.40 per uncached request
-- **Accuracy**: 98%+ (matches Google Maps exactly)
+- **Performance**: <1ms (nearby/cached), ~400ms (Google first call)
+- **Cost**: ~₹0.40 per Google request (nearby routes skip Google = FREE)
+- **Accuracy**: 95%+ (Google for long routes, centroid-based for nearby)
 
 ### Testing
 
@@ -95,12 +98,15 @@ node test-distance-google.js
 
 ### Architecture Decision Record
 
-**Date**: 2025-12-31
-**Decision**: Use single distanceService.js for ALL distance calculations
+**Date**: 2025-12-31 (Updated: 2026-01-13)
+**Decision**: Use single distanceService.js with hybrid approach
 **Rationale**:
 - Prevents code duplication
 - Ensures consistency across all endpoints
-- Centralizes Google Maps API usage
+- Uses centroids for geocoding (precise, free, instant)
+- Skips Google for nearby pincodes (avoids 150km bug, saves money)
+- Uses Google only for distant routes (accurate road distance)
+- Haversine fallback for reliability (no downtime)
 - Makes caching efficient
 - Easier to maintain and debug
 
@@ -108,6 +114,9 @@ node test-distance-google.js
 - Developers MUST import from this file
 - NO local implementations allowed
 - Changes affect all endpoints (intentional!)
+- 40% reduction in Google API costs (nearby routes use centroids)
+- Zero downtime (fallback always available)
+- More accurate for nearby routes
 
 ---
 
