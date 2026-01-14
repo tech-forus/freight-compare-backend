@@ -11,6 +11,7 @@ import {
   getTemporaryTransporters,
   getTemporaryTransporterById,
   updateTemporaryTransporterStatus,
+  toggleTemporaryTransporterVerification,
   updateTemporaryTransporter,
   getTransporters,
   getTrasnporterDetails,
@@ -78,6 +79,7 @@ router.get("/gettemporarytransporters", protect, getTemporaryTransporters);
 router.get("/temporary/:id", protect, getTemporaryTransporterById);  // Get single by ID - must be before PUT routes
 router.put("/temporary/:id", protect, updateTemporaryTransporter);
 router.put("/temporary/:id/status", protect, updateTemporaryTransporterStatus);
+router.put("/temporary/:id/verification", protect, toggleTemporaryTransporterVerification);
 
 // Transporter listings & details
 router.get("/gettransporter", getTransporters);

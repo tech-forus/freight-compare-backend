@@ -22,6 +22,10 @@ const temporaryTransporterModel = new mongoose.Schema(
       enum: ["pending", "approved", "rejected"],
       default: "approved",
     },
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
     vendorPhone: {
       type: Number,
       required: true,

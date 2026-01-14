@@ -372,6 +372,7 @@ export const calculatePrice = async (req, res) => {
               zoneConfig: 1,
               invoiceValueCharges: 1,
               approvalStatus: 1,
+              isVerified: 1,
               // CRITICAL OPTIMIZATION: Only fetch the 2 pincodes we need
               serviceability: {
                 $filter: {
@@ -687,6 +688,8 @@ export const calculatePrice = async (req, res) => {
             priceChart: tuc.prices?.priceChart || {},
             // Approval status for UI display
             approvalStatus: tuc.approvalStatus || 'approved', // Default to approved for legacy vendors
+            // Verification status for badge display
+            isVerified: tuc.isVerified || false,
           };
 
         })
@@ -902,6 +905,7 @@ export const calculatePrice = async (req, res) => {
               servicePincodeCount: data.service?.length || 0,
               // Public transporters are pre-verified by the system - show as "Verified" in UI
               approvalStatus: 'approved',
+              isVerified: true, // Public transporters are always verified
               // Contact information for "Contact Now" feature
               phone: data.phone || null,
               email: data.email || null,
@@ -1456,6 +1460,45 @@ export const updateTemporaryTransporterStatus = async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating temporary transporter status:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+export const toggleTemporaryTransporterVerification = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isVerified } = req.body;
+
+    if (typeof isVerified !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid isVerified value. Must be boolean",
+      });
+    }
+
+    const updatedTransporter = await temporaryTransporterModel.findByIdAndUpdate(
+      id,
+      { isVerified },
+      { new: true }
+    );
+
+    if (!updatedTransporter) {
+      return res.status(404).json({
+        success: false,
+        message: "Temporary transporter not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Vendor marked as ${isVerified ? 'verified' : 'unverified'} successfully`,
+      data: updatedTransporter,
+    });
+  } catch (error) {
+    console.error("Error toggling temporary transporter verification:", error);
     return res.status(500).json({
       success: false,
       message: "Server error",
