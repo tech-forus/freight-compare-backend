@@ -1285,6 +1285,8 @@ export const addTiedUpCompany = async (req, res) => {
       pincode: Number(pincode),
       rating: Number(rating) || 3,
       subVendor: sanitizedSubVendor,
+      // Verification status - new vendors are unverified by default
+      isVerified: false,
       // NEW: Additional fields for autofill
       serviceMode: serviceMode || '',
       volumetricUnit: volumetricUnit || 'cm',
