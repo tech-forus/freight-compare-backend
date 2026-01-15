@@ -6,7 +6,7 @@ import bcrypt from 'bcrypt';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
-const __dirname  = dirname(__filename);
+const __dirname = dirname(__filename);
 import redisClient from "../utils/redisClient.js";
 import dotenv from 'dotenv'
 import jwt from "jsonwebtoken";
@@ -58,11 +58,30 @@ export const addTransporter = async (req, res) => {
     const sheetName = workbook.SheetNames[0];
     const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-    const service = rows.map(row => ({
-      pincode: Number(row.pincode || row.Pincode),
-      isOda: String(row.isOda || row.ODA || 'false').toLowerCase() === 'true',
-      zone: String(row.zone || row.Zone || '')
-    }));
+    // Helper function to get value from row with case-insensitive key matching
+    const getRowValue = (row, ...keys) => {
+      for (const key of keys) {
+        // Check exact match first
+        if (row[key] !== undefined) return row[key];
+        // Check case-insensitive match
+        const rowKeys = Object.keys(row);
+        const matchedKey = rowKeys.find(k => k.toLowerCase() === key.toLowerCase());
+        if (matchedKey && row[matchedKey] !== undefined) return row[matchedKey];
+      }
+      return undefined;
+    };
+
+    const service = rows.map(row => {
+      const odaValue = String(getRowValue(row, 'isOda', 'ODA', 'oda', 'IsOda') || 'false').toLowerCase();
+      // Handle both "true"/"false" and "yes"/"no" formats
+      const isOda = odaValue === 'true' || odaValue === 'yes';
+
+      return {
+        pincode: Number(getRowValue(row, 'pincode', 'Pincode', 'PINCODE') || 0) || null,
+        isOda: isOda,
+        zone: String(getRowValue(row, 'zone', 'Zone', 'ZONE') || '')
+      };
+    });
 
     const salt = await bcrypt.genSalt(BCRYPT_SALT_ROUNDS);
     const hashedPassword = await bcrypt.hash(password, salt);
@@ -150,7 +169,7 @@ export const addPrice = async (req, res) => {
 };
 
 export const downloadTransporterTemplate = (req, res) => {
-   const filePath = path.join(__dirname, 'templates', 'pincodes_template.xlsx');
+  const filePath = path.join(__dirname, 'templates', 'pincodes_template.xlsx');
 
   // res.download sets the right headers and streams the file
   res.download(filePath, 'pincodes_template.xlsx', err => {
@@ -228,7 +247,7 @@ export const transporterLogin = async (req, res) => {
 export const getTransporters = async (req, res) => {
   try {
     const { transporter } = req.query;
-    const transporters = await transporterModel.find({companyName: transporter});
+    const transporters = await transporterModel.find({ companyName: transporter });
     if (!transporters || transporters.length === 0) {
       return res.status(404).json({
         success: false,
