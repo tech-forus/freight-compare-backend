@@ -84,8 +84,9 @@ app.use(morgan(":date[iso] :id :method :url :status :res[content-length] - :resp
 
 // ────────────────────────────── CORS (with logs) ─────────────────────────────
 const STATIC_ALLOWED = [
-  // Production - REPLACE WITH YOUR ACTUAL VERCEL URL LATER
+  // Production
   "https://freight-compare-frontend.vercel.app",
+  "https://transporter-signup.netlify.app",
 
   // Development - keep these for local testing
   "http://localhost:3000",
