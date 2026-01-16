@@ -62,6 +62,11 @@ const temporaryTransporterModel = new mongoose.Schema(
       type: Number,
       default: 3,
     },
+    // Total number of ratings received (for display purposes)
+    totalRatings: {
+      type: Number,
+      default: 0,
+    },
     // Individual vendor rating parameters (1-5 scale each)
     vendorRatings: {
       priceSupport: {

@@ -29,6 +29,8 @@ import invoiceChargesRoutes from './routes/invoiceChargesRoutes.js';
 import newsRoute from './routes/newsRoute.js';
 // ✅ NEW: Form config route (Form Builder)
 import formConfigRoute from './routes/formConfigRoute.js';
+// ✅ NEW: Vendor rating route (multi-parameter ratings)
+import ratingRoute from './routes/ratingRoute.js';
 
 // Dev-stub routes (ESM imports)
 import dashboardRoutes from "./routes/dashboard.js";
@@ -207,6 +209,8 @@ app.use('/api/transporters', invoiceChargesRoutes);
 app.use('/api/news', newsRoute);
 // ✅ NEW: Form config endpoint (Form Builder)
 app.use('/api/form-config', formConfigRoute);
+// ✅ NEW: Vendor rating endpoint (multi-parameter ratings)
+app.use('/api/ratings', ratingRoute);
 
 // Bulk upload stub
 app.post("/upload", async (req, res) => {
