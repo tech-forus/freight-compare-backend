@@ -410,6 +410,12 @@ export const calculatePrice = async (req, res) => {
       ]);
       console.timeEnd(`[${rid}] DB_PARALLEL`);
 
+      // DEBUG: Log all ratings from tiedUpCompanies aggregation
+      console.log(`[RATING DEBUG AGGREGATION] Fetched ${tiedUpCompanies.length} tied-up companies:`);
+      tiedUpCompanies.forEach(t => {
+        console.log(`  - ${t.companyName}: rating = ${t.rating} (type: ${typeof t.rating})`);
+      });
+
       if (!customerData) {
         return res
           .status(404)
@@ -692,7 +698,12 @@ export const calculatePrice = async (req, res) => {
             // Verification status for badge display
             isVerified: tuc.isVerified || false,
             // Vendor rating from database (user-configurable rating)
-            rating: tuc.rating || 4,
+            // DEBUG: Log rating for each vendor
+            rating: (() => {
+              const dbRating = tuc.rating;
+              console.log(`[RATING DEBUG] ${companyName}: DB rating = ${dbRating}, type = ${typeof dbRating}`);
+              return dbRating ?? 4; // Use nullish coalescing to preserve 0 ratings
+            })(),
           };
 
         })
@@ -913,7 +924,12 @@ export const calculatePrice = async (req, res) => {
               phone: data.phone || null,
               email: data.email || null,
               // Vendor rating from database (user-configurable rating)
-              rating: data.rating || 4,
+              // DEBUG: Log rating for each public vendor
+              rating: (() => {
+                const dbRating = data.rating;
+                console.log(`[RATING DEBUG PUBLIC] ${data.companyName}: DB rating = ${dbRating}, type = ${typeof dbRating}`);
+                return dbRating ?? 4; // Use nullish coalescing to preserve 0 ratings
+              })(),
             };
           } catch (error) {
             console.error(`  [ERROR] Failed processing ${data.companyName}:`, error.message);
