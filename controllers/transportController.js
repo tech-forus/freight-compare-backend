@@ -1004,6 +1004,8 @@ export const addTiedUpCompany = async (req, res) => {
       volumetricUnit,
       volumetricDivisor,
       cftFactor,
+      // NEW: Individual vendor rating parameters
+      vendorRatings,
     } = req.body;
 
     // Debug: Log received values to verify they're coming through
@@ -1059,6 +1061,16 @@ export const addTiedUpCompany = async (req, res) => {
       } catch (e) {
         console.error("Failed to parse serviceability:", e);
         serviceability = [];
+      }
+    }
+
+    // NEW: Parse vendorRatings if it's a JSON string (from FormData)
+    if (typeof vendorRatings === "string") {
+      try {
+        vendorRatings = JSON.parse(vendorRatings);
+      } catch (e) {
+        console.error("Failed to parse vendorRatings:", e);
+        vendorRatings = null;
       }
     }
 
@@ -1284,6 +1296,14 @@ export const addTiedUpCompany = async (req, res) => {
       city: sanitizedCity,
       pincode: Number(pincode),
       rating: Number(rating) || 3,
+      // NEW: Individual vendor rating parameters
+      vendorRatings: vendorRatings || {
+        priceSupport: 0,
+        deliveryTime: 0,
+        tracking: 0,
+        salesSupport: 0,
+        damageLoss: 0,
+      },
       subVendor: sanitizedSubVendor,
       // Verification status - new vendors are unverified by default
       isVerified: false,
