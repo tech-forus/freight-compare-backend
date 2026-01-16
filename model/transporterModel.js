@@ -58,7 +58,7 @@ const transporterSchema = new mongoose.Schema({
         type: String,
         default: ""
     },
-    experience:{
+    experience: {
         type: Number,
         required: true,
         default: 0
@@ -76,9 +76,15 @@ const transporterSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
-    customerNetwork:{
+    customerNetwork: {
         type: String,
         default: ""
+    },
+    rating: {
+        type: Number,
+        default: 4,
+        min: 0,
+        max: 5
     },
     servicableZones: [{
         type: String,
@@ -110,7 +116,7 @@ const transporterSchema = new mongoose.Schema({
         required: true
     }
 
-}, {timestamps: true});
+}, { timestamps: true });
 
 // Database indexes for query performance
 transporterSchema.index({ companyName: 1 }); // Fast company lookups
