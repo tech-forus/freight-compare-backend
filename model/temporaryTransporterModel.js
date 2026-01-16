@@ -62,6 +62,39 @@ const temporaryTransporterModel = new mongoose.Schema(
       type: Number,
       default: 3,
     },
+    // Individual vendor rating parameters (1-5 scale each)
+    vendorRatings: {
+      priceSupport: {
+        type: Number,
+        min: 0,
+        max: 5,
+        default: 0,
+      },
+      deliveryTime: {
+        type: Number,
+        min: 0,
+        max: 5,
+        default: 0,
+      },
+      tracking: {
+        type: Number,
+        min: 0,
+        max: 5,
+        default: 0,
+      },
+      salesSupport: {
+        type: Number,
+        min: 0,
+        max: 5,
+        default: 0,
+      },
+      damageLoss: {
+        type: Number,
+        min: 0,
+        max: 5,
+        default: 0,
+      },
+    },
     googleReviewUrl: {
       type: String,
       default: "",

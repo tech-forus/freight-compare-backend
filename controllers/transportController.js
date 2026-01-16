@@ -373,6 +373,7 @@ export const calculatePrice = async (req, res) => {
               invoiceValueCharges: 1,
               approvalStatus: 1,
               isVerified: 1,
+              rating: 1,
               // CRITICAL OPTIMIZATION: Only fetch the 2 pincodes we need
               serviceability: {
                 $filter: {
@@ -402,7 +403,7 @@ export const calculatePrice = async (req, res) => {
               }
             }
           })
-          .select('_id companyName servicableZones phone email')
+          .select('_id companyName servicableZones phone email rating')
           .lean()
           .maxTimeMS(10000)
           .exec()
@@ -690,6 +691,8 @@ export const calculatePrice = async (req, res) => {
             approvalStatus: tuc.approvalStatus || 'approved', // Default to approved for legacy vendors
             // Verification status for badge display
             isVerified: tuc.isVerified || false,
+            // Vendor rating from database (user-configurable rating)
+            rating: tuc.rating || 4,
           };
 
         })
@@ -909,6 +912,8 @@ export const calculatePrice = async (req, res) => {
               // Contact information for "Contact Now" feature
               phone: data.phone || null,
               email: data.email || null,
+              // Vendor rating from database (user-configurable rating)
+              rating: data.rating || 4,
             };
           } catch (error) {
             console.error(`  [ERROR] Failed processing ${data.companyName}:`, error.message);
