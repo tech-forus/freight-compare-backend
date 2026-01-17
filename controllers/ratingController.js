@@ -98,6 +98,24 @@ export const submitRating = async (req, res) => {
       });
     }
 
+    // DEBUG: Check which collection actually has this vendor
+    if (!isSpecialVendor) {
+      const [tempExists, regularExists] = await Promise.all([
+        TemporaryTransporter.exists({ _id: vendorId }),
+        Transporter.exists({ _id: vendorId })
+      ]);
+      console.log(`[Rating DEBUG] vendorId=${vendorId}, resolvedVendorType=${resolvedVendorType}, existsInTemp=${!!tempExists}, existsInRegular=${!!regularExists}`);
+
+      // Auto-correct vendorType if it's wrong
+      if (resolvedVendorType === "temporary" && !tempExists && regularExists) {
+        console.log(`[Rating DEBUG] CORRECTING vendorType from 'temporary' to 'regular' because vendor exists in transporters collection`);
+        resolvedVendorType = "regular";
+      } else if (resolvedVendorType === "regular" && !regularExists && tempExists) {
+        console.log(`[Rating DEBUG] CORRECTING vendorType from 'regular' to 'temporary' because vendor exists in temporaryTransporters collection`);
+        resolvedVendorType = "temporary";
+      }
+    }
+
     // Calculate overall rating if not provided
     const calculatedOverall =
       overallRating ||
