@@ -3,10 +3,15 @@
  *
  * Handles vendor rating submission and retrieval.
  * Updates vendor's aggregated ratings after each new rating.
+ *
+ * Supports three vendor types:
+ * - 'regular': Normal transporters from Transporter collection
+ * - 'temporary': Tied-up vendors from TemporaryTransporter collection
+ * - 'special': Wheelseye FTL and LOCAL FTL (client-side injected, no DB document)
  */
 
 import mongoose from "mongoose";
-import VendorRating from "../model/vendorRatingModel.js";
+import VendorRating, { isSpecialVendorId, SPECIAL_VENDOR_IDS } from "../model/vendorRatingModel.js";
 import TemporaryTransporter from "../model/temporaryTransporterModel.js";
 import Transporter from "../model/transporterModel.js";
 
@@ -17,8 +22,9 @@ import Transporter from "../model/transporterModel.js";
  *
  * Body:
  * {
- *   vendorId: string (ObjectId),
- *   isTemporaryVendor: boolean,
+ *   vendorId: string (ObjectId or special vendor string ID),
+ *   vendorType?: 'regular' | 'temporary' | 'special',
+ *   isTemporaryVendor?: boolean (deprecated, use vendorType),
  *   ratings: {
  *     priceSupport: number (1-5),
  *     deliveryTime: number (1-5),
@@ -32,7 +38,7 @@ import Transporter from "../model/transporterModel.js";
  */
 export const submitRating = async (req, res) => {
   try {
-    const { vendorId, isTemporaryVendor, ratings, comment, overallRating } = req.body;
+    const { vendorId, vendorType, isTemporaryVendor, ratings, comment, overallRating } = req.body;
 
     // Validate required fields
     if (!vendorId) {
@@ -61,8 +67,31 @@ export const submitRating = async (req, res) => {
       }
     }
 
-    // Validate vendorId is a valid ObjectId
-    if (!mongoose.Types.ObjectId.isValid(vendorId)) {
+    // Check if this is a special vendor (Wheelseye FTL or LOCAL FTL)
+    const isSpecialVendor = isSpecialVendorId(vendorId);
+
+    // Determine vendor type (new vendorType field takes precedence over deprecated isTemporaryVendor)
+    let resolvedVendorType = "regular";
+    if (vendorType) {
+      // Use explicitly provided vendorType
+      if (!["regular", "temporary", "special"].includes(vendorType)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid vendorType. Must be 'regular', 'temporary', or 'special'.",
+        });
+      }
+      resolvedVendorType = vendorType;
+    } else if (isSpecialVendor) {
+      // Auto-detect special vendors by their ID
+      resolvedVendorType = "special";
+    } else if (isTemporaryVendor) {
+      // Fallback to deprecated isTemporaryVendor for backward compatibility
+      resolvedVendorType = "temporary";
+    }
+
+    // Validate vendorId format based on vendor type
+    // Special vendors use string IDs, regular/temporary use ObjectIds
+    if (!isSpecialVendor && !mongoose.Types.ObjectId.isValid(vendorId)) {
       return res.status(400).json({
         success: false,
         message: "Invalid vendor ID format",
@@ -80,9 +109,12 @@ export const submitRating = async (req, res) => {
         5;
 
     // Create new rating document
+    // For special vendors, store the string ID directly
+    // For regular/temporary, convert to ObjectId
     const newRating = new VendorRating({
-      vendorId: new mongoose.Types.ObjectId(vendorId),
-      isTemporaryVendor: Boolean(isTemporaryVendor),
+      vendorId: isSpecialVendor ? vendorId : new mongoose.Types.ObjectId(vendorId),
+      vendorType: resolvedVendorType,
+      isTemporaryVendor: resolvedVendorType === "temporary" || resolvedVendorType === "special",
       ratings: {
         priceSupport: ratings.priceSupport,
         deliveryTime: ratings.deliveryTime,
@@ -99,13 +131,14 @@ export const submitRating = async (req, res) => {
     await newRating.save();
 
     // Update vendor's aggregated ratings
+    // For special vendors, this only calculates the new rating (no DB update)
     const newOverallRating = await updateVendorAggregatedRatings(
       vendorId,
-      Boolean(isTemporaryVendor)
+      resolvedVendorType
     );
 
     console.log(
-      `[Rating] New rating submitted for vendor ${vendorId} (temporary: ${isTemporaryVendor}). New overall: ${newOverallRating}`
+      `[Rating] New rating submitted for vendor ${vendorId} (type: ${resolvedVendorType}). New overall: ${newOverallRating}`
     );
 
     return res.status(201).json({
@@ -127,29 +160,54 @@ export const submitRating = async (req, res) => {
 /**
  * Get all ratings for a vendor (paginated)
  *
- * GET /api/ratings/vendor/:vendorId?isTemporary=true&page=1&limit=10
+ * GET /api/ratings/vendor/:vendorId?vendorType=special&page=1&limit=10
+ * Legacy: GET /api/ratings/vendor/:vendorId?isTemporary=true&page=1&limit=10
  */
 export const getVendorRatings = async (req, res) => {
   try {
     const { vendorId } = req.params;
-    const { isTemporary = "false", page = "1", limit = "10" } = req.query;
+    const { vendorType, isTemporary = "false", page = "1", limit = "10" } = req.query;
 
-    if (!mongoose.Types.ObjectId.isValid(vendorId)) {
+    // Check if this is a special vendor
+    const isSpecialVendor = isSpecialVendorId(vendorId);
+
+    // Determine vendor type for query
+    let resolvedVendorType = "regular";
+    if (vendorType) {
+      resolvedVendorType = vendorType;
+    } else if (isSpecialVendor) {
+      resolvedVendorType = "special";
+    } else if (isTemporary === "true") {
+      resolvedVendorType = "temporary";
+    }
+
+    // Validate vendorId format for non-special vendors
+    if (!isSpecialVendor && !mongoose.Types.ObjectId.isValid(vendorId)) {
       return res.status(400).json({
         success: false,
         message: "Invalid vendor ID format",
       });
     }
 
-    const isTemporaryVendor = isTemporary === "true";
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10) || 10));
     const skip = (pageNum - 1) * limitNum;
 
+    // Build query - use vendorType if available, fallback to isTemporaryVendor for backward compatibility
     const query = {
-      vendorId: new mongoose.Types.ObjectId(vendorId),
-      isTemporaryVendor,
+      vendorId: isSpecialVendor ? vendorId : new mongoose.Types.ObjectId(vendorId),
     };
+
+    // Add vendorType or isTemporaryVendor to query
+    if (resolvedVendorType === "special") {
+      query.vendorType = "special";
+    } else {
+      // For backward compatibility, check both vendorType and isTemporaryVendor
+      query.$or = [
+        { vendorType: resolvedVendorType },
+        { vendorType: { $exists: false }, isTemporaryVendor: resolvedVendorType === "temporary" }
+      ];
+    }
 
     const [ratings, total] = await Promise.all([
       VendorRating.find(query)
@@ -183,29 +241,53 @@ export const getVendorRatings = async (req, res) => {
 /**
  * Get rating summary for a vendor (aggregated averages)
  *
- * GET /api/ratings/summary/:vendorId?isTemporary=true
+ * GET /api/ratings/summary/:vendorId?vendorType=special
+ * Legacy: GET /api/ratings/summary/:vendorId?isTemporary=true
  */
 export const getVendorRatingSummary = async (req, res) => {
   try {
     const { vendorId } = req.params;
-    const { isTemporary = "false" } = req.query;
+    const { vendorType, isTemporary = "false" } = req.query;
 
-    if (!mongoose.Types.ObjectId.isValid(vendorId)) {
+    // Check if this is a special vendor
+    const isSpecialVendor = isSpecialVendorId(vendorId);
+
+    // Determine vendor type for query
+    let resolvedVendorType = "regular";
+    if (vendorType) {
+      resolvedVendorType = vendorType;
+    } else if (isSpecialVendor) {
+      resolvedVendorType = "special";
+    } else if (isTemporary === "true") {
+      resolvedVendorType = "temporary";
+    }
+
+    // Validate vendorId format for non-special vendors
+    if (!isSpecialVendor && !mongoose.Types.ObjectId.isValid(vendorId)) {
       return res.status(400).json({
         success: false,
         message: "Invalid vendor ID format",
       });
     }
 
-    const isTemporaryVendor = isTemporary === "true";
+    // Build match query
+    const matchQuery = {
+      vendorId: isSpecialVendor ? vendorId : new mongoose.Types.ObjectId(vendorId),
+    };
+
+    // Add vendorType or isTemporaryVendor to query
+    if (resolvedVendorType === "special") {
+      matchQuery.vendorType = "special";
+    } else {
+      // For backward compatibility, check both vendorType and isTemporaryVendor
+      matchQuery.$or = [
+        { vendorType: resolvedVendorType },
+        { vendorType: { $exists: false }, isTemporaryVendor: resolvedVendorType === "temporary" }
+      ];
+    }
 
     const aggregation = await VendorRating.aggregate([
-      {
-        $match: {
-          vendorId: new mongoose.Types.ObjectId(vendorId),
-          isTemporaryVendor,
-        },
-      },
+      { $match: matchQuery },
       {
         $group: {
           _id: null,
@@ -282,21 +364,36 @@ export const getVendorRatingSummary = async (req, res) => {
  * Update vendor's aggregated ratings after a new rating is submitted
  *
  * Calculates new averages for each parameter and updates the vendor document.
+ * For special vendors (Wheelseye FTL, LOCAL FTL), only calculates - no DB update.
  *
- * @param {string} vendorId - The vendor's ObjectId
- * @param {boolean} isTemporaryVendor - Whether this is a temporary transporter
+ * @param {string} vendorId - The vendor's ObjectId or special vendor string ID
+ * @param {string} vendorType - The type of vendor: 'regular', 'temporary', or 'special'
  * @returns {number} The new overall rating
  */
-async function updateVendorAggregatedRatings(vendorId, isTemporaryVendor) {
+async function updateVendorAggregatedRatings(vendorId, vendorType) {
   try {
+    // Check if this is a special vendor
+    const isSpecialVendor = vendorType === "special" || isSpecialVendorId(vendorId);
+
+    // Build match query based on vendor type
+    const matchQuery = {
+      vendorId: isSpecialVendor ? vendorId : new mongoose.Types.ObjectId(vendorId),
+    };
+
+    // Add vendorType to query
+    if (isSpecialVendor) {
+      matchQuery.vendorType = "special";
+    } else {
+      // For backward compatibility with existing data
+      matchQuery.$or = [
+        { vendorType: vendorType },
+        { vendorType: { $exists: false }, isTemporaryVendor: vendorType === "temporary" }
+      ];
+    }
+
     // Aggregate all ratings for this vendor
     const aggregation = await VendorRating.aggregate([
-      {
-        $match: {
-          vendorId: new mongoose.Types.ObjectId(vendorId),
-          isTemporaryVendor,
-        },
-      },
+      { $match: matchQuery },
       {
         $group: {
           _id: null,
@@ -318,7 +415,16 @@ async function updateVendorAggregatedRatings(vendorId, isTemporaryVendor) {
     const data = aggregation[0];
     const newOverallRating = Math.round(data.avgOverall * 10) / 10;
 
-    // Update the appropriate vendor collection
+    // For special vendors, skip DB update (they don't exist in any collection)
+    // Only return the calculated rating
+    if (isSpecialVendor) {
+      console.log(
+        `[Rating] Special vendor ${vendorId} ratings calculated: overall=${newOverallRating}, total=${data.totalRatings}`
+      );
+      return newOverallRating;
+    }
+
+    // Update the appropriate vendor collection for regular/temporary vendors
     const updateData = {
       rating: newOverallRating,
       vendorRatings: {
@@ -331,7 +437,7 @@ async function updateVendorAggregatedRatings(vendorId, isTemporaryVendor) {
       totalRatings: data.totalRatings,
     };
 
-    if (isTemporaryVendor) {
+    if (vendorType === "temporary") {
       await TemporaryTransporter.findByIdAndUpdate(vendorId, updateData);
     } else {
       // Update regular transporters with all rating data
