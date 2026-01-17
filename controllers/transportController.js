@@ -21,8 +21,102 @@ import {
   sanitizeString,
 } from "../utils/validators.js";
 import { validateShipmentDetails } from "../utils/chargeableWeightService.js";
+import redisClient from "../utils/redisClient.js";
 
 dotenv.config();
+
+// ============================================================================
+// PERFORMANCE OPTIMIZATION: Pre-calculate volumetric weights for common kFactors
+// This avoids recalculating the same values for each vendor in the loop
+// ============================================================================
+const COMMON_K_FACTORS = [4500, 5000, 5500, 6000];
+
+/**
+ * Pre-calculates volumetric weights for all common kFactors
+ * @param {Array} shipment_details - Array of shipment items
+ * @param {Object} legacyParams - Legacy single-box params {length, width, height, noofboxes}
+ * @returns {Map<number, number>} Map of kFactor → volumetricWeight
+ */
+function preCalculateVolumetricWeights(shipment_details, legacyParams = {}) {
+  const weights = new Map();
+  const { length, width, height, noofboxes } = legacyParams;
+
+  for (const kFactor of COMMON_K_FACTORS) {
+    let volumetricWeight = 0;
+
+    if (Array.isArray(shipment_details) && shipment_details.length > 0) {
+      volumetricWeight = shipment_details.reduce((sum, item) => {
+        const volWeightForItem =
+          ((item.length || 0) *
+            (item.width || 0) *
+            (item.height || 0) *
+            (item.count || 0)) /
+          kFactor;
+        return sum + Math.ceil(volWeightForItem);
+      }, 0);
+    } else if (length && width && height && noofboxes) {
+      const volWeightForLegacy =
+        ((length || 0) * (width || 0) * (height || 0) * (noofboxes || 0)) /
+        kFactor;
+      volumetricWeight = Math.ceil(volWeightForLegacy);
+    }
+
+    weights.set(kFactor, volumetricWeight);
+  }
+
+  return weights;
+}
+
+/**
+ * Gets volumetric weight for a specific kFactor, using pre-calculated cache if available
+ * @param {number} kFactor - The divisor for volumetric calculation
+ * @param {Map} preCalculated - Pre-calculated weights map
+ * @param {Array} shipment_details - Fallback shipment details
+ * @param {Object} legacyParams - Fallback legacy params
+ * @returns {number} The volumetric weight
+ */
+function getVolumetricWeight(kFactor, preCalculated, shipment_details, legacyParams = {}) {
+  // Check if we have pre-calculated value
+  if (preCalculated.has(kFactor)) {
+    return preCalculated.get(kFactor);
+  }
+
+  // Calculate on-demand for non-standard kFactors
+  const { length, width, height, noofboxes } = legacyParams;
+
+  if (Array.isArray(shipment_details) && shipment_details.length > 0) {
+    return shipment_details.reduce((sum, item) => {
+      const volWeightForItem =
+        ((item.length || 0) *
+          (item.width || 0) *
+          (item.height || 0) *
+          (item.count || 0)) /
+        kFactor;
+      return sum + Math.ceil(volWeightForItem);
+    }, 0);
+  } else if (length && width && height && noofboxes) {
+    const volWeightForLegacy =
+      ((length || 0) * (width || 0) * (height || 0) * (noofboxes || 0)) /
+      kFactor;
+    return Math.ceil(volWeightForLegacy);
+  }
+
+  return 0;
+}
+
+// ============================================================================
+// PERFORMANCE: Debug logging control - set to false in production
+// To revert: change ENABLE_VENDOR_DEBUG_LOGGING to true
+// ============================================================================
+const ENABLE_VENDOR_DEBUG_LOGGING = process.env.NODE_ENV !== 'production' && process.env.DEBUG_VENDORS === 'true';
+
+// ============================================================================
+// PERFORMANCE: Redis cache settings for calculatePrice results
+// Cache TTL: 5 minutes (prices can change, but not frequently)
+// To disable caching: set ENABLE_RESULT_CACHING to false
+// ============================================================================
+const ENABLE_RESULT_CACHING = true;
+const RESULT_CACHE_TTL_SECONDS = 300; // 5 minutes
 
 /** Helper: robust access to zoneRates whether Map or plain object */
 // helper: safe get unit price from various chart shapes and zone key cases
@@ -209,6 +303,32 @@ export const calculatePrice = async (req, res) => {
     const INVOICE_MAX = 100_000_000; // configurable upper bound
 
     const rid = req.id || "no-reqid";
+
+    // =========================================================================
+    // PERFORMANCE: Redis cache check for repeated calculations
+    // Cache key includes all parameters that affect the result
+    // To disable: set ENABLE_RESULT_CACHING to false at top of file
+    // =========================================================================
+    let cacheKey = null;
+    if (ENABLE_RESULT_CACHING && redisClient.isReady) {
+      try {
+        // Build deterministic cache key from request parameters
+        const shipmentHash = JSON.stringify(shipment_details || [{ noofboxes, length, width, height, weight }]);
+        cacheKey = `calc:${customerID}:${fromPincode}:${toPincode}:${modeoftransport}:${invoiceValueRaw || 0}:${shipmentHash}`;
+
+        const cachedResult = await redisClient.get(cacheKey);
+        if (cachedResult) {
+          console.log(`[${rid}] ⚡ CACHE HIT - returning cached result (saved ~2000ms)`);
+          const parsed = JSON.parse(cachedResult);
+          // Add cache indicator to debug info
+          parsed.debug = { ...parsed.debug, fromCache: true, cacheKey };
+          return res.status(200).json(parsed);
+        }
+      } catch (cacheErr) {
+        // Cache error should not block calculation - just log and continue
+        console.warn(`[${rid}] Cache read error (continuing without cache):`, cacheErr.message);
+      }
+    }
 
     // Validate invoiceValue - allow missing/empty values (default to 1)
     let invoiceValue = INVOICE_MIN; // Default value
@@ -454,6 +574,13 @@ export const calculatePrice = async (req, res) => {
       );
       console.timeEnd(`[${rid}] PREBUILD_SERVICEABILITY_MAPS`);
 
+      // ===== PERFORMANCE: Pre-calculate volumetric weights for common kFactors =====
+      // This avoids recalculating the same values 50-100 times in vendor loops
+      const preCalcVolumetricWeights = preCalculateVolumetricWeights(
+        shipment_details,
+        { length, width, height, noofboxes }
+      );
+
       // Tied-up companies (customer-specific vendors)
       console.time(`[${rid}] BUILD tiedUpResult`);
       const tiedUpRaw = await Promise.all(
@@ -524,7 +651,8 @@ export const calculatePrice = async (req, res) => {
           const pr = tuc.prices.priceRate || {};
 
           // 🔍 DEBUG: Log vendor pricing data for any vendor with "jan" in name (case insensitive)
-          if (tuc.companyName && tuc.companyName.toLowerCase().includes('jan')) {
+          // PERFORMANCE: Only log when ENABLE_VENDOR_DEBUG_LOGGING is true (disabled in production)
+          if (ENABLE_VENDOR_DEBUG_LOGGING && tuc.companyName && tuc.companyName.toLowerCase().includes('jan')) {
             console.log('🔍 [DEBUG ADD JAN] =====================================');
             console.log(`🔍 [DEBUG] Vendor: "${tuc.companyName}" (_id: ${tuc._id})`);
             console.log(`🔍 [DEBUG] Route: ${effectiveOriginZone} → ${effectiveDestZone}`);
@@ -544,23 +672,13 @@ export const calculatePrice = async (req, res) => {
           }
           const kFactor = pr.kFactor ?? pr.divisor ?? 5000;
 
-          let volumetricWeight = 0;
-          if (Array.isArray(shipment_details) && shipment_details.length > 0) {
-            volumetricWeight = shipment_details.reduce((sum, item) => {
-              const volWeightForItem =
-                ((item.length || 0) *
-                  (item.width || 0) *
-                  (item.height || 0) *
-                  (item.count || 0)) /
-                kFactor;
-              return sum + Math.ceil(volWeightForItem);
-            }, 0);
-          } else {
-            const volWeightForLegacy =
-              ((length || 0) * (width || 0) * (height || 0) * (noofboxes || 0)) /
-              kFactor;
-            volumetricWeight = Math.ceil(volWeightForLegacy);
-          }
+          // PERFORMANCE: Use pre-calculated volumetric weight instead of recalculating
+          const volumetricWeight = getVolumetricWeight(
+            kFactor,
+            preCalcVolumetricWeights,
+            shipment_details,
+            { length, width, height, noofboxes }
+          );
 
           const chargeableWeight = Math.max(volumetricWeight, actualWeight);
           const baseFreight = unitPrice * chargeableWeight;
@@ -614,7 +732,8 @@ export const calculatePrice = async (req, res) => {
             appointmentCharges;
 
           // 🔍 DEBUG: Log CALCULATED values for "Add Jan"
-          if (tuc.companyName && tuc.companyName.toLowerCase().includes('jan')) {
+          // PERFORMANCE: Only log when ENABLE_VENDOR_DEBUG_LOGGING is true (disabled in production)
+          if (ENABLE_VENDOR_DEBUG_LOGGING && tuc.companyName && tuc.companyName.toLowerCase().includes('jan')) {
             console.log('🧮 [DEBUG CALC] =====================================');
             console.log(`🧮 [DEBUG] actualWeight: ${actualWeight} kg`);
             console.log(`🧮 [DEBUG] volumetricWeight: ${volumetricWeight} kg`);
@@ -784,23 +903,13 @@ export const calculatePrice = async (req, res) => {
 
             const kFactor = pr.kFactor ?? pr.divisor ?? 5000;
 
-            let volumetricWeight = 0;
-            if (Array.isArray(shipment_details) && shipment_details.length > 0) {
-              volumetricWeight = shipment_details.reduce((sum, item) => {
-                const volWeightForItem =
-                  ((item.length || 0) *
-                    (item.width || 0) *
-                    (item.height || 0) *
-                    (item.count || 0)) /
-                  kFactor;
-                return sum + Math.ceil(volWeightForItem);
-              }, 0);
-            } else {
-              const volWeightForLegacy =
-                ((length || 0) * (width || 0) * (height || 0) * (noofboxes || 0)) /
-                kFactor;
-              volumetricWeight = Math.ceil(volWeightForLegacy);
-            }
+            // PERFORMANCE: Use pre-calculated volumetric weight instead of recalculating
+            const volumetricWeight = getVolumetricWeight(
+              kFactor,
+              preCalcVolumetricWeights,
+              shipment_details,
+              { length, width, height, noofboxes }
+            );
 
             const chargeableWeight = Math.max(volumetricWeight, actualWeight);
             const baseFreight = unitPrice * chargeableWeight;
@@ -946,7 +1055,7 @@ export const calculatePrice = async (req, res) => {
       // PERFORMANCE: Log total processing time
       console.log(`[PERF] calculatePrice completed in ${Date.now() - startTime}ms`);
 
-      return res.status(200).json({
+      const responseData = {
         success: true,
         message: allTiedUpResults.length > 0 || transporterResult.length > 0
           ? "Price calculated successfully"
@@ -967,7 +1076,27 @@ export const calculatePrice = async (req, res) => {
           matchedPublic: transporterResult.length,
           processingTimeMs: Date.now() - startTime,
         }
-      });
+      };
+
+      // =========================================================================
+      // PERFORMANCE: Cache the result in Redis for future requests
+      // Only cache successful responses with results
+      // To disable: set ENABLE_RESULT_CACHING to false at top of file
+      // =========================================================================
+      if (ENABLE_RESULT_CACHING && cacheKey && redisClient.isReady) {
+        try {
+          // Only cache if we have results (don't cache empty responses)
+          if (allTiedUpResults.length > 0 || transporterResult.length > 0) {
+            await redisClient.setEx(cacheKey, RESULT_CACHE_TTL_SECONDS, JSON.stringify(responseData));
+            console.log(`[${rid}] 📦 Result cached for ${RESULT_CACHE_TTL_SECONDS}s`);
+          }
+        } catch (cacheErr) {
+          // Cache write error should not affect response
+          console.warn(`[${rid}] Cache write error (response still sent):`, cacheErr.message);
+        }
+      }
+
+      return res.status(200).json(responseData);
     } catch (err) {
       console.error("An error occurred in calculatePrice:", err);
       console.error("Stack trace:", err.stack);
