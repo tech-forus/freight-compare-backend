@@ -334,8 +334,8 @@ async function updateVendorAggregatedRatings(vendorId, isTemporaryVendor) {
     if (isTemporaryVendor) {
       await TemporaryTransporter.findByIdAndUpdate(vendorId, updateData);
     } else {
-      // For regular transporters, only update rating (they don't have vendorRatings field)
-      await Transporter.findByIdAndUpdate(vendorId, { rating: newOverallRating });
+      // Update regular transporters with all rating data
+      await Transporter.findByIdAndUpdate(vendorId, updateData);
     }
 
     console.log(

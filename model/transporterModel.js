@@ -86,6 +86,17 @@ const transporterSchema = new mongoose.Schema({
         min: 0,
         max: 5
     },
+    totalRatings: {
+        type: Number,
+        default: 0
+    },
+    vendorRatings: {
+        priceSupport: { type: Number, default: 0, min: 0, max: 5 },
+        deliveryTime: { type: Number, default: 0, min: 0, max: 5 },
+        tracking: { type: Number, default: 0, min: 0, max: 5 },
+        salesSupport: { type: Number, default: 0, min: 0, max: 5 },
+        damageLoss: { type: Number, default: 0, min: 0, max: 5 }
+    },
     servicableZones: [{
         type: String,
         required: true
