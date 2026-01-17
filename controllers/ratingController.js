@@ -106,7 +106,7 @@ export const submitRating = async (req, res) => {
         ratings.tracking +
         ratings.salesSupport +
         ratings.damageLoss) /
-        5;
+      5;
 
     // Create new rating document
     // For special vendors, store the string ID directly
@@ -438,10 +438,13 @@ async function updateVendorAggregatedRatings(vendorId, vendorType) {
     };
 
     if (vendorType === "temporary") {
-      await TemporaryTransporter.findByIdAndUpdate(vendorId, updateData);
+      console.log(`[Rating DEBUG] Updating TemporaryTransporter ${vendorId} with:`, JSON.stringify(updateData));
+      const updateResult = await TemporaryTransporter.findByIdAndUpdate(vendorId, updateData, { new: true });
+      console.log(`[Rating DEBUG] TemporaryTransporter update result: ${updateResult ? 'SUCCESS' : 'NOT FOUND'}, new rating: ${updateResult?.rating}`);
     } else {
-      // Update regular transporters with all rating data
-      await Transporter.findByIdAndUpdate(vendorId, updateData);
+      console.log(`[Rating DEBUG] Updating Transporter ${vendorId} with:`, JSON.stringify(updateData));
+      const updateResult = await Transporter.findByIdAndUpdate(vendorId, updateData, { new: true });
+      console.log(`[Rating DEBUG] Transporter update result: ${updateResult ? 'SUCCESS' : 'NOT FOUND'}, new rating: ${updateResult?.rating}`);
     }
 
     console.log(
