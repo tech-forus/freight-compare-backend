@@ -374,6 +374,8 @@ export const calculatePrice = async (req, res) => {
               approvalStatus: 1,
               isVerified: 1,
               rating: 1,
+              vendorRatings: 1,
+              totalRatings: 1,
               // CRITICAL OPTIMIZATION: Only fetch the 2 pincodes we need
               serviceability: {
                 $filter: {
@@ -403,7 +405,7 @@ export const calculatePrice = async (req, res) => {
               }
             }
           })
-          .select('_id companyName servicableZones phone email rating')
+          .select('_id companyName servicableZones phone email rating vendorRatings totalRatings')
           .lean()
           .maxTimeMS(10000)
           .exec()
@@ -693,6 +695,9 @@ export const calculatePrice = async (req, res) => {
             isVerified: tuc.isVerified || false,
             // Vendor rating from database (user-configurable rating)
             rating: tuc.rating ?? 4, // Use nullish coalescing to preserve 0 ratings
+            // Detailed vendor ratings breakdown
+            vendorRatings: tuc.vendorRatings || null,
+            totalRatings: tuc.totalRatings || 0,
           };
 
         })
@@ -914,6 +919,9 @@ export const calculatePrice = async (req, res) => {
               email: data.email || null,
               // Vendor rating from database (user-configurable rating)
               rating: data.rating ?? 4, // Use nullish coalescing to preserve 0 ratings
+              // Detailed vendor ratings breakdown
+              vendorRatings: data.vendorRatings || null,
+              totalRatings: data.totalRatings || 0,
             };
           } catch (error) {
             console.error(`  [ERROR] Failed processing ${data.companyName}:`, error.message);
