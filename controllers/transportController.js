@@ -905,7 +905,7 @@ export const calculatePrice = async (req, res) => {
               invoiceAddon: Math.round(invoiceAddon),
               invoiceValueCharge: Math.round(invoiceAddon),
               isHidden: false,
-              isTemporaryTransporter: true,
+              isTemporaryTransporter: false, // PUBLIC transporters are from transporters collection, NOT temporaryTransporters
               // Zone configuration for Service Zones modal
               selectedZones: data.servicableZones || data.serviceZones || [],
               zoneConfig: data.zoneConfig || {},

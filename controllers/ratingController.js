@@ -438,13 +438,10 @@ async function updateVendorAggregatedRatings(vendorId, vendorType) {
     };
 
     if (vendorType === "temporary") {
-      console.log(`[Rating DEBUG] Updating TemporaryTransporter ${vendorId} with:`, JSON.stringify(updateData));
-      const updateResult = await TemporaryTransporter.findByIdAndUpdate(vendorId, updateData, { new: true });
-      console.log(`[Rating DEBUG] TemporaryTransporter update result: ${updateResult ? 'SUCCESS' : 'NOT FOUND'}, new rating: ${updateResult?.rating}`);
+      await TemporaryTransporter.findByIdAndUpdate(vendorId, updateData);
     } else {
-      console.log(`[Rating DEBUG] Updating Transporter ${vendorId} with:`, JSON.stringify(updateData));
-      const updateResult = await Transporter.findByIdAndUpdate(vendorId, updateData, { new: true });
-      console.log(`[Rating DEBUG] Transporter update result: ${updateResult ? 'SUCCESS' : 'NOT FOUND'}, new rating: ${updateResult?.rating}`);
+      // Update regular transporters with all rating data
+      await Transporter.findByIdAndUpdate(vendorId, updateData);
     }
 
     console.log(
