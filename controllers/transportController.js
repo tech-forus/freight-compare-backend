@@ -1656,6 +1656,20 @@ export const toggleTemporaryTransporterVerification = async (req, res) => {
       });
     }
 
+    // Clear all cached calculation results when verification status changes
+    // This ensures users see the updated verification badge immediately
+    if (redisClient.isReady) {
+      try {
+        const keys = await redisClient.keys('calc:*');
+        if (keys.length > 0) {
+          await redisClient.del(keys);
+          console.log(`[CACHE] Cleared ${keys.length} cached calculation results after verification change`);
+        }
+      } catch (cacheErr) {
+        console.warn('[CACHE] Failed to clear cache after verification change:', cacheErr.message);
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: `Vendor marked as ${isVerified ? 'verified' : 'unverified'} successfully`,
