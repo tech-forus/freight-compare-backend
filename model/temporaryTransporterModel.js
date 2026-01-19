@@ -17,11 +17,17 @@ const temporaryTransporterModel = new mongoose.Schema(
       type: String,
       required: true,
     },
+    // APPROVAL: Whether vendor can appear in search results
+    // Flow: pending → approved/rejected (by admin)
     approvalStatus: {
       type: String,
       enum: ["pending", "approved", "rejected"],
       default: "approved",
     },
+    // VERIFICATION: Manual trust indicator (separate from approval!)
+    // Default is FALSE - admin must explicitly mark as verified
+    // UI Logic: isVerified===true → green badge, else → yellow badge
+    // ⚠️ DO NOT confuse with approvalStatus - these are independent
     isVerified: {
       type: Boolean,
       default: false,
