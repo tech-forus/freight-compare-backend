@@ -401,6 +401,12 @@ export const loginController = async (req, res) => {
         isSubscribed: customer.isSubscribed,
         isTransporter: customer.isTransporter,
         isAdmin: customer.isAdmin,
+        adminPermissions: customer.adminPermissions || {
+          formBuilder: true,
+          dashboard: false,
+          vendorApproval: false,
+          userManagement: false,
+        },
       },
     };
 

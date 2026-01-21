@@ -123,6 +123,24 @@ const customerSchema = new mongoose.Schema({
     default: false,
     required: true
   },
+  adminPermissions: {
+    formBuilder: {
+      type: Boolean,
+      default: true
+    },
+    dashboard: {
+      type: Boolean,
+      default: false
+    },
+    vendorApproval: {
+      type: Boolean,
+      default: false
+    },
+    userManagement: {
+      type: Boolean,
+      default: false
+    }
+  },
   tokenAvailable: {
     type: Number,
     default: 10,

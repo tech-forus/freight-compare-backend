@@ -35,6 +35,7 @@ import {
 } from '../controllers/transporterAuth.js';
 
 import { protect } from '../middleware/authMiddleware.js';
+import { hasVendorApprovalPermission } from '../middleware/isAdminMiddleware.js';
 import { uploadLimiter, apiLimiter, authLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
@@ -78,8 +79,9 @@ router.get('/temporary', protect, (req, res, next) => {
 router.get("/gettemporarytransporters", protect, getTemporaryTransporters);
 router.get("/temporary/:id", protect, getTemporaryTransporterById);  // Get single by ID - must be before PUT routes
 router.put("/temporary/:id", protect, updateTemporaryTransporter);
-router.put("/temporary/:id/status", protect, updateTemporaryTransporterStatus);
-router.put("/temporary/:id/verification", protect, toggleTemporaryTransporterVerification);
+// Vendor approval routes - require vendorApproval permission
+router.put("/temporary/:id/status", protect, hasVendorApprovalPermission, updateTemporaryTransporterStatus);
+router.put("/temporary/:id/verification", protect, hasVendorApprovalPermission, toggleTemporaryTransporterVerification);
 
 // Transporter listings & details
 router.get("/gettransporter", getTransporters);

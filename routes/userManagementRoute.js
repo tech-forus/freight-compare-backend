@@ -2,6 +2,10 @@ import express from 'express';
 import { protect } from '../middleware/authMiddleware.js';
 import { isSuperAdmin } from '../middleware/superAdminMiddleware.js';
 import {
+  hasDashboardPermission,
+  hasUserManagementPermission,
+} from '../middleware/isAdminMiddleware.js';
+import {
   getAllCustomers,
   getCustomerById,
   updateCustomerSubscription,
@@ -9,25 +13,34 @@ import {
   deleteCustomer,
   getAllTransporters,
   getPlatformStats,
+  getAllUsersForAdminManagement,
+  approveUserAsAdmin,
+  revokeAdminAccess,
+  updateAdminPermissions,
 } from '../controllers/userManagementController.js';
 
 const router = express.Router();
 
-// All routes require authentication and super admin privileges
+// All routes require authentication
 router.use(protect);
-router.use(isSuperAdmin);
 
-// Platform statistics
-router.get('/stats', getPlatformStats);
+// Platform statistics - requires dashboard permission
+router.get('/stats', hasDashboardPermission, getPlatformStats);
 
-// Customer management routes
-router.get('/customers', getAllCustomers);
-router.get('/customers/:id', getCustomerById);
-router.put('/customers/:id/subscription', updateCustomerSubscription);
-router.put('/customers/:id', updateCustomer);
-router.delete('/customers/:id', deleteCustomer);
+// Customer management routes - requires userManagement permission
+router.get('/customers', hasUserManagementPermission, getAllCustomers);
+router.get('/customers/:id', hasUserManagementPermission, getCustomerById);
+router.put('/customers/:id/subscription', hasUserManagementPermission, updateCustomerSubscription);
+router.put('/customers/:id', hasUserManagementPermission, updateCustomer);
+router.delete('/customers/:id', hasUserManagementPermission, deleteCustomer);
 
-// Transporter management routes
-router.get('/transporters', getAllTransporters);
+// Transporter management routes - requires userManagement permission
+router.get('/transporters', hasUserManagementPermission, getAllTransporters);
+
+// Admin management routes - SUPER ADMIN ONLY
+router.get('/admins', isSuperAdmin, getAllUsersForAdminManagement);
+router.put('/admins/:id/approve', isSuperAdmin, approveUserAsAdmin);
+router.put('/admins/:id/revoke', isSuperAdmin, revokeAdminAccess);
+router.put('/admins/:id/permissions', isSuperAdmin, updateAdminPermissions);
 
 export default router;
