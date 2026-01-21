@@ -1,6 +1,7 @@
 import express from 'express';
-import { changePasswordController, forgotPasswordController, initiateSignup, loginController, verifyOtpsAndSignup} from '../controllers/authController.js';
+import { changePasswordController, forgotPasswordController, getCurrentUser, initiateSignup, loginController, verifyOtpsAndSignup } from '../controllers/authController.js';
 import { authLimiter } from '../middleware/rateLimiter.js';
+import { protect } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
@@ -13,7 +14,9 @@ router.post('/login', authLimiter, loginController);
 router.post('/forgotpassword', authLimiter, forgotPasswordController);
 router.post('/changepassword', authLimiter, changePasswordController);
 
-// You can add login route here later
-// router.post('/login', loginCustomer);
+// @route   GET api/auth/me
+// @desc    Get current user with fresh permissions (for page refresh)
+// @access  Private (requires auth token)
+router.get('/me', protect, getCurrentUser);
 
 export default router;

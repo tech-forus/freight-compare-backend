@@ -29,7 +29,7 @@ const sendPhoneOtpVia2Factor = async (phone) => {
     if (data.Status !== "Success") {
       throw new Error(`2Factor API error: ${data.Details || 'Unknown error'}`);
     }
-    
+
     console.log(`[2Factor] OTP sent successfully to ${phone}, SessionId: ${data.Details}`);
     return data.Details; // sessionId
   } catch (error) {
@@ -155,7 +155,7 @@ export const initiateSignup = async (req, res) => {
     // Send phone OTP via 2Factor
     let phoneSessionId = null;
     let phoneOtpSent = false;
-    
+
     try {
       phoneSessionId = await sendPhoneOtpVia2Factor(phone);
       phoneOtpSent = true;
@@ -192,15 +192,15 @@ export const initiateSignup = async (req, res) => {
         maxHeight: Number(maxHeight) || 0,
         typeOfCustomers: typeOfCustomers?.trim() || "",
       },
-      otps: { 
-        emailOtp, 
+      otps: {
+        emailOtp,
         phoneSessionId,
-        phoneOtpSent 
+        phoneOtpSent
       },
     };
 
     await redisClient.setEx(
-      `pendingSignup:${email}`, 
+      `pendingSignup:${email}`,
       600, // 10 minutes
       JSON.stringify(redisPayload)
     );
@@ -247,7 +247,7 @@ export const initiateSignup = async (req, res) => {
 
     // Success response
     return res.status(200).json({
-      message: phoneOtpSent 
+      message: phoneOtpSent
         ? "OTP sent to your email and phone. Please verify both to complete registration."
         : "OTP sent to your email. Please verify to complete registration.",
       phoneSessionId,
@@ -273,8 +273,8 @@ export const verifyOtpsAndSignup = async (req, res) => {
     // Retrieve pending signup data from Redis
     const redisData = await redisClient.get(`pendingSignup:${email}`);
     if (!redisData) {
-      return res.status(400).json({ 
-        message: "No pending verification found or OTP expired. Please restart signup." 
+      return res.status(400).json({
+        message: "No pending verification found or OTP expired. Please restart signup."
       });
     }
 
@@ -290,13 +290,13 @@ export const verifyOtpsAndSignup = async (req, res) => {
     // Verify phone OTP if it was sent
     if (otps.phoneOtpSent && phoneSessionId) {
       if (!phoneOtp) {
-        return res.status(400).json({ 
-          message: "Phone OTP is required." 
+        return res.status(400).json({
+          message: "Phone OTP is required."
         });
       }
 
       const isValidPhoneOtp = await verifyPhoneOtpVia2Factor(phoneSessionId, phoneOtp);
-      
+
       if (!isValidPhoneOtp) {
         return res.status(400).json({ message: "Invalid phone OTP." });
       }
@@ -335,7 +335,7 @@ export const verifyOtpsAndSignup = async (req, res) => {
 
   } catch (error) {
     console.error('[Verify] Verification Error:', error);
-    return res.status(500).json({ 
+    return res.status(500).json({
       message: "Server error during verification.",
       error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
@@ -545,7 +545,7 @@ export const forgotPasswordController = async (req, res) => {
 
   } catch (error) {
     console.error("[ForgotPassword] Error:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       message: "Server error during password reset process.",
       error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
@@ -629,10 +629,68 @@ export const changePasswordController = async (req, res) => {
 
   } catch (error) {
     console.error("[ChangePassword] Error:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       message: "Server error during password change process.",
       error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
   }
 };
 
+/* =========================
+   GET CURRENT USER (for permission refresh)
+========================= */
+
+/**
+ * GET /api/auth/me
+ * Returns fresh user data from database (used to refresh permissions on page load)
+ */
+export const getCurrentUser = async (req, res) => {
+  try {
+    // req.user is set by the protect middleware with fresh data from DB
+    const customer = req.user;
+
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    console.log('[Auth] getCurrentUser - Returning fresh user data for:', customer.email);
+
+    return res.status(200).json({
+      success: true,
+      customer: {
+        _id: customer._id,
+        email: customer.email,
+        phone: customer.phone,
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+        companyName: customer.companyName,
+        gstNumber: customer.gstNumber,
+        businessType: customer.businessType,
+        monthlyOrder: customer.monthlyOrder,
+        address: customer.address,
+        state: customer.state,
+        pincode: customer.pincode,
+        tokenAvailable: customer.tokenAvailable,
+        isSubscribed: customer.isSubscribed,
+        isTransporter: customer.isTransporter,
+        isAdmin: customer.isAdmin,
+        adminPermissions: customer.adminPermissions || {
+          formBuilder: true,
+          dashboard: false,
+          vendorApproval: false,
+          userManagement: false,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[Auth] getCurrentUser Error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error fetching user data',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};
