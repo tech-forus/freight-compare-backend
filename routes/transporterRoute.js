@@ -24,7 +24,11 @@ import {
   deleteZoneMatrix,
   saveWizardData,
   getWizardData,
-  searchTransporters  // Quick Lookup search (minimal data)
+  searchTransporters,  // Quick Lookup search (minimal data)
+  // Regular transporter verification functions
+  getRegularTransporters,
+  updateTransporterStatus,
+  toggleTransporterVerification
 } from '../controllers/transportController.js';
 
 import {
@@ -82,6 +86,12 @@ router.put("/temporary/:id", protect, updateTemporaryTransporter);
 // Vendor approval routes - require vendorApproval permission
 router.put("/temporary/:id/status", protect, hasVendorApprovalPermission, updateTemporaryTransporterStatus);
 router.put("/temporary/:id/verification", protect, hasVendorApprovalPermission, toggleTemporaryTransporterVerification);
+
+// Regular transporter routes (for admin approval/verification)
+// These work with the transporters collection (not temporary transporters)
+router.get("/regular", protect, hasVendorApprovalPermission, getRegularTransporters);
+router.put("/regular/:id/status", protect, hasVendorApprovalPermission, updateTransporterStatus);
+router.put("/regular/:id/verification", protect, hasVendorApprovalPermission, toggleTransporterVerification);
 
 // Transporter listings & details
 router.get("/gettransporter", getTransporters);

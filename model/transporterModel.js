@@ -116,6 +116,21 @@ const transporterSchema = new mongoose.Schema({
         }
     }],
 
+    // APPROVAL: Whether vendor can appear in search results
+    // Flow: pending → approved/rejected (by admin)
+    approvalStatus: {
+        type: String,
+        enum: ["pending", "approved", "rejected"],
+        default: "approved",  // Existing transporters are pre-approved
+    },
+    // VERIFICATION: Manual trust indicator (separate from approval!)
+    // Default is FALSE - admin must explicitly mark as verified
+    // UI Logic: isVerified===true → green badge, else → yellow badge
+    isVerified: {
+        type: Boolean,
+        default: false,
+    },
+
     isAdmin: {
         type: Boolean,
         default: false,

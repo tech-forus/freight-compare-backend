@@ -1684,6 +1684,146 @@ export const toggleTemporaryTransporterVerification = async (req, res) => {
   }
 };
 
+// ============================================================================
+// REGULAR TRANSPORTER VERIFICATION FUNCTIONS
+// These mirror the temporary transporter functions but work with the 
+// transporters collection (regular transporters)
+// ============================================================================
+
+/**
+ * Update regular transporter approval status
+ * PUT /api/transporter/regular/:id/status
+ */
+export const updateTransporterStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!status || !["pending", "approved", "rejected"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status. Must be pending, approved, or rejected",
+      });
+    }
+
+    const updatedTransporter = await transporterModel.findByIdAndUpdate(
+      id,
+      { approvalStatus: status },
+      { new: true }
+    ).select("-password -servicableZones -service");
+
+    if (!updatedTransporter) {
+      return res.status(404).json({
+        success: false,
+        message: "Transporter not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Transporter ${status} successfully`,
+      data: updatedTransporter,
+    });
+  } catch (error) {
+    console.error("Error updating transporter status:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+/**
+ * Toggle regular transporter verification status
+ * PUT /api/transporter/regular/:id/verification
+ */
+export const toggleTransporterVerification = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isVerified } = req.body;
+
+    if (typeof isVerified !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid isVerified value. Must be boolean",
+      });
+    }
+
+    const updatedTransporter = await transporterModel.findByIdAndUpdate(
+      id,
+      { isVerified },
+      { new: true }
+    ).select("-password -servicableZones -service");
+
+    if (!updatedTransporter) {
+      return res.status(404).json({
+        success: false,
+        message: "Transporter not found",
+      });
+    }
+
+    // Clear cached calculation results when verification status changes
+    if (redisClient.isReady) {
+      try {
+        const keys = await redisClient.keys('calc:*');
+        if (keys.length > 0) {
+          await redisClient.del(keys);
+          console.log(`[CACHE] Cleared ${keys.length} cached calculation results after verification change`);
+        }
+      } catch (cacheErr) {
+        console.warn('[CACHE] Failed to clear cache after verification change:', cacheErr.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Transporter marked as ${isVerified ? 'verified' : 'unverified'} successfully`,
+      data: updatedTransporter,
+    });
+  } catch (error) {
+    console.error("Error toggling transporter verification:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+/**
+ * Get all regular transporters for admin management
+ * GET /api/transporter/regular
+ * Returns transporters with approval and verification status
+ */
+export const getRegularTransporters = async (req, res) => {
+  try {
+    // Filter out test/dummy transporters
+    const query = {
+      companyName: {
+        $not: {
+          $regex: /test|tester|dummy|vellore/i
+        }
+      }
+    };
+
+    const transporters = await transporterModel
+      .find(query)
+      .select("-password -servicableZones -service")
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      message: "Transporters fetched successfully",
+      data: transporters,
+    });
+  } catch (error) {
+    console.error("[BACKEND] Error fetching regular transporters:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
 export const getTransporters = async (req, res) => {
   try {
     const { search } = req.query;
