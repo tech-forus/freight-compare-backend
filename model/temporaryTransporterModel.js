@@ -30,10 +30,6 @@ const temporaryTransporterModel = new mongoose.Schema(
     // ⚠️ DO NOT confuse with approvalStatus - these are independent
     isVerified: {
       type: Boolean,
-      default: false,
-    },
-    vendorPhone: {
-      type: Number,
       required: true,
     },
     vendorEmail: {

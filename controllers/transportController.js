@@ -1022,7 +1022,8 @@ export const calculatePrice = async (req, res) => {
               servicePincodeCount: data.service?.length || 0,
               // Public transporters are pre-verified by the system - show as "Verified" in UI
               approvalStatus: 'approved',
-              isVerified: true, // Public transporters are always verified
+              isVerified: data.isVerified === true,
+              //If DB says true → UI shows verified, If DB says false → UI shows unverified
               // Contact information for "Contact Now" feature
               phone: data.phone || null,
               email: data.email || null,
