@@ -525,7 +525,7 @@ export const calculatePrice = async (req, res) => {
               }
             }
           })
-          .select('_id companyName servicableZones phone email rating vendorRatings totalRatings')
+          .select('_id companyName servicableZones phone email rating vendorRatings totalRatings isVerified approvalStatus')
           .lean()
           .maxTimeMS(10000)
           .exec()
