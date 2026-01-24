@@ -146,10 +146,14 @@ export const calculateDistanceBetweenPincode = async (originPincode, destination
       return createHaversineFallbackResult(origin, destination, straightLineKm);
     }
 
-    // Handle no road route (e.g., islands)
+    // Handle no road route (e.g., islands) - throw error instead of fake distance
     if (element.status === 'ZERO_RESULTS' || element.status === 'NOT_FOUND') {
-      console.warn(`⚠️ No road route found by Google for ${origin}→${destination}, using haversine fallback`);
-      return createHaversineFallbackResult(origin, destination, straightLineKm);
+      console.warn(`⚠️ No road route found by Google for ${origin}→${destination}`);
+      const err = new Error(`No road route found between ${origin} and ${destination}`);
+      err.code = 'NO_ROAD_ROUTE';
+      err.origin = origin;
+      err.destination = destination;
+      throw err;
     }
 
     if (element.status !== 'OK') {
