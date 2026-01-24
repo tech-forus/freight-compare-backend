@@ -199,6 +199,10 @@ export const calculateDistanceBetweenPincode = async (originPincode, destination
     };
 
   } catch (err) {
+    // Re-throw NO_ROAD_ROUTE error - this is intentional, not a failure
+    if (err.code === 'NO_ROAD_ROUTE') {
+      throw err;
+    }
     // Google API failed (network error, timeout, etc.)
     console.error(`❌ Google API error for ${origin}→${destination}: ${err.message}, using haversine fallback`);
     return createHaversineFallbackResult(origin, destination, straightLineKm);
