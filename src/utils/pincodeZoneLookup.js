@@ -7,7 +7,7 @@ const __dirname = path.dirname(__filename);
 
 // Try to load FE pincodes.json for zone mapping; fall back to local data if provided
 const FE_PINCODES_PATH = path.join(__dirname, "../../data/pincodes.json");
-const LOCAL_PINCODES_PATH = path.join(__dirname, "../../data/pincodes_zone.json");
+const LOCAL_PINCODES_PATH = path.join(__dirname, "../../data/pincodes.json");
 
 let zoneMap = null;
 let pincodeDataMap = null; // Full pincode data with city/state
