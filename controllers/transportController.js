@@ -1,16 +1,30 @@
-
 import mongoose from "mongoose";
 import customerModel from "../model/customerModel.js";
 import priceModel from "../model/priceModel.js";
 import temporaryTransporterModel from "../model/temporaryTransporterModel.js";
 import transporterModel from "../model/transporterModel.js";
-import usertransporterrelationshipModel from "../model/usertransporterrelationshipModel.js";
+import PackingList from "../model/packingListModel.js";
+import { redisClient } from "../db/redisDb.js";
+import {
+  calculateDistanceBetweenPincode,
+  zoneForPincode,
+} from "../utils/distanceService.js";
+import { isValidPincode } from "../utils/pincodeValidation.js";
+import {
+  validateShipmentDetails,
+} from "../utils/shipmentValidation.js";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
 import dotenv from "dotenv";
-import packingModel from "../model/packingModel.js";
-import ratingModel from "../model/ratingModel.js";
-import PackingList from "../model/packingModel.js"; // Make sure model is imported
-import { calculateDistanceBetweenPincode } from "../utils/distanceService.js";
-import { zoneForPincode } from "../src/utils/pincodeZoneLookup.js";
+
+// PERFORMANCE: Import worker pool for parallel vendor calculations
+const workerPool = require("../services/worker-pool.service.js");
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config();
 import {
   validateZoneMatrix,
   sanitizeZoneCodes,
@@ -277,6 +291,49 @@ function applyInvoiceRule(rule, invoiceValue, ctx = {}) {
     return 0;
   }
 }
+
+// ============================================================================
+// PERFORMANCE: Batch Parallel Processing Helper
+// Process items in batches to achieve true parallelization without worker threads
+// ============================================================================
+
+/**
+ * Process array items in batches with Promise.allSettled
+ * @param {Array} items - Items to process
+ * @param {Function} processFn - Async function to process each item
+ * @param {number} batchSize - Number of items per batch (default: 8 for optimal performance)
+ * @returns {Promise<Array>} Processed results (nulls filtered out)
+ */
+async function processBatched(items, processFn, batchSize = 8) {
+  if (!items || items.length === 0) return [];
+
+  const allResults = [];
+
+  // Split into batches
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+
+    // Process batch in TRULY parallel with Promise.allSettled (handles errors gracefully)
+    const batchResults = await Promise.allSettled(
+      batch.map(item => processFn(item))
+    );
+
+    // Extract successful results
+    const successfulResults = batchResults
+      .filter(r => r.status === 'fulfilled' && r.value !== null && r.value !== undefined)
+      .map(r => r.value);
+
+    allResults.push(...successfulResults);
+
+    // Yield to event loop between batches (prevents blocking)
+    if (i + batchSize < items.length) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
+
+  return allResults;
+}
+
 // -----------------------------
 // Replace your existing calculatePrice with this entire block
 // -----------------------------
@@ -620,21 +677,26 @@ export const calculatePrice = async (req, res) => {
             effectiveDestZone = destEntry.zone?.toUpperCase() || destZone;
             destIsOda = destEntry.isODA === true;
           } else {
-            // Legacy zone-based check
+            // ============================================================
+            // LEGACY FALLBACK DISABLED (2026-01-30)
+            // Reason: All real vendors use explicit serviceability arrays.
+            //         Zone-only fallback was only used by test accounts.
+            // To revert: Uncomment the block below and remove "return null"
+            // ============================================================
+            return null; // No serviceability = no coverage
+
+            /* LEGACY ZONE FALLBACK - DISABLED
             const relSelected = Array.isArray(tuc.selectedZones)
               ? tuc.selectedZones.map((z) => String(z).toUpperCase())
               : [];
-
-            // Debug: Log zone check for vendors with special zones (X1, X2, X3) - only when needed
-            // PERF: Removed verbose per-vendor logging
 
             // Zone-based check: vendor must have both origin and destination zones selected
             if (relSelected.length > 0 &&
               (!relSelected.includes(originZone) || !relSelected.includes(destZone))
             ) {
-              // vendor does not serve one of the zones selected
               return null;
             }
+            END LEGACY ZONE FALLBACK */
           }
 
           // Get unit price using effective zones (from serviceability or fallback)

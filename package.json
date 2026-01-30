@@ -22,6 +22,7 @@
     "dot": "^1.1.3",
     "dotenv": "^16.5.0",
     "env": "^0.0.2",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "express-rate-limit": "^7.1.5",
     "generate-password": "^1.7.1",
