@@ -34,7 +34,6 @@ import {
   validatePincode,
   sanitizeString,
 } from "../utils/validators.js";
-import { validateShipmentDetails } from "../utils/chargeableWeightService.js";
 import redisClient from "../utils/redisClient.js";
 
 dotenv.config();
