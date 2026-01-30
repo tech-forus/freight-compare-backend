@@ -921,18 +921,40 @@ export const calculatePrice = async (req, res) => {
             const normalizedOriginZone = String(originZone).toUpperCase();
             const normalizedDestZone = String(destZone).toUpperCase();
 
-            // Public transporters don't have pincode-level ODA data in fast lookup
-            const isDestOda = false;
+            // ========== PINCODE-LEVEL CHECK (STRICT) ==========
+            // Public transporters must have BOTH origin and destination in service[] array
+            // Zone-level matching is disabled - pincode-level is the only source of truth
+            const serviceArray = data.service || [];
+            if (!serviceArray.length) {
+              return null; // No service array = no coverage
+            }
 
-            // ========== PRICING LOOKUP (FIRST) ==========
-            // Industry best practice: Check if vendor has pricing for this route BEFORE checking servicableZones
-            // Reason: Pricing is the source of truth - if they have a price, they can service it
+            // Build pincode Map for O(1) lookup
+            const pincodeMap = new Map();
+            for (const entry of serviceArray) {
+              if (entry.pincode) {
+                pincodeMap.set(String(entry.pincode), entry);
+              }
+            }
 
+            const fromPinStr = String(fromPincode);
+            const toPinStr = String(toPincode);
+
+            // STRICT: Both origin AND destination must be in service array
+            const originEntry = pincodeMap.get(fromPinStr);
+            const destEntry = pincodeMap.get(toPinStr);
+            if (!originEntry || !destEntry) {
+              return null; // Pincode not in vendor's service list
+            }
+
+            // Use ODA from service entry if available
+            const isDestOda = destEntry.isODA === true;
+
+            // ========== PRICING LOOKUP ==========
             // PERFORMANCE: Use pre-fetched Map instead of DB query
             const priceData = priceMap.get(String(data._id));
 
             if (!priceData) {
-              // DEBUG LOG REMOVED
               return null;
             }
 
@@ -943,12 +965,6 @@ export const calculatePrice = async (req, res) => {
               normalizedDestZone
             );
             if (!unitPrice) {
-              return null;
-            }
-
-            // CHECK: Does vendor serve these zones?
-            const vendorZones = (data.servicableZones || []).map(z => String(z).toUpperCase());
-            if (vendorZones.length > 0 && (!vendorZones.includes(normalizedOriginZone) || !vendorZones.includes(normalizedDestZone))) {
               return null;
             }
 
