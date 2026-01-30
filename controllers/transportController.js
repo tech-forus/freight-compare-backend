@@ -561,20 +561,38 @@ export const calculatePrice = async (req, res) => {
           .lean()
           .maxTimeMS(15000),
 
-        // Query 3: Public transporters (only select minimal needed fields)
-        // Filter out test/dummy transporters with names containing: test, tester, dummy, vellore
-        transporterModel
-          .find({
-            companyName: {
-              $not: {
-                $regex: /test|tester|dummy|vellore/i
+        // Query 3: Public transporters - OPTIMIZED: Only fetch the 2 pincodes we need from service array
+        transporterModel.aggregate([
+          {
+            $match: {
+              companyName: {
+                $not: {
+                  $regex: /test|tester|dummy|vellore/i
+                }
               }
             }
-          })
-          .select('_id companyName servicableZones phone email rating vendorRatings totalRatings isVerified approvalStatus')
-          .lean()
-          .maxTimeMS(10000)
-          .exec()
+          },
+          {
+            $project: {
+              companyName: 1,
+              phone: 1,
+              email: 1,
+              rating: 1,
+              vendorRatings: 1,
+              totalRatings: 1,
+              isVerified: 1,
+              approvalStatus: 1,
+              // CRITICAL: Only fetch the 2 pincodes we need from service array
+              service: {
+                $filter: {
+                  input: { $ifNull: ["$service", []] },
+                  as: "s",
+                  cond: { $in: ["$$s.pincode", [fromPinNum, toPinNum, fromPinStr, toPinStr]] }
+                }
+              }
+            }
+          }
+        ]).option({ maxTimeMS: 15000 })
       ]);
       console.timeEnd(`[${rid}] DB_PARALLEL`);
 
