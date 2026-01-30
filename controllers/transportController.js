@@ -5,10 +5,8 @@ import temporaryTransporterModel from "../model/temporaryTransporterModel.js";
 import transporterModel from "../model/transporterModel.js";
 import PackingList from "../model/packingModel.js";
 import redisClient from "../utils/redisClient.js";
-import {
-  calculateDistanceBetweenPincode,
-  zoneForPincode,
-} from "../utils/distanceService.js";
+import { calculateDistanceBetweenPincode } from "../utils/distanceService.js";
+import { zoneForPincode } from "../src/utils/pincodeZoneLookup.js";
 import { validateShipmentDetails } from "../utils/chargeableWeightService.js";
 import path from "path";
 import { fileURLToPath } from "url";
