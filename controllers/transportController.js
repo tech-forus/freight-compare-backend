@@ -10,16 +10,12 @@ import { zoneForPincode } from "../src/utils/pincodeZoneLookup.js";
 import { validateShipmentDetails } from "../utils/chargeableWeightService.js";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createRequire } from "module";
 import fs from "fs";
 import dotenv from "dotenv";
+import workerPool from "../services/worker-pool.service.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// PERFORMANCE: Import worker pool (CommonJS module) for parallel vendor calculations
-const require = createRequire(import.meta.url);
-const workerPool = require("../services/worker-pool.service.js");
 
 dotenv.config();
 import {

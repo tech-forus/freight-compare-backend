@@ -4,7 +4,7 @@
  * This eliminates the single-threaded bottleneck in calculatePrice
  */
 
-const { parentPort } = require('worker_threads');
+import { parentPort } from 'worker_threads';
 
 /**
  * Helper: Get unit price from price chart

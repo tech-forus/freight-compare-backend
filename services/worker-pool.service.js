@@ -4,8 +4,12 @@
  * PERFORMANCE: 8 workers = 8X CPU parallelization
  */
 
-const { Worker } = require('worker_threads');
-const path = require('path');
+import { Worker } from 'worker_threads';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 class WorkerPool {
     constructor(size = 8) {
@@ -199,4 +203,4 @@ process.on('SIGINT', async () => {
     process.exit(0);
 });
 
-module.exports = workerPool;
+export default workerPool;
