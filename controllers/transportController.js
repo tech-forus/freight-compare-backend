@@ -9,10 +9,7 @@ import {
   calculateDistanceBetweenPincode,
   zoneForPincode,
 } from "../utils/distanceService.js";
-import { isValidPincode } from "../utils/pincodeValidation.js";
-import {
-  validateShipmentDetails,
-} from "../utils/shipmentValidation.js";
+import { validateShipmentDetails } from "../utils/chargeableWeightService.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
