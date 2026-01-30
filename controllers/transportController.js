@@ -3,7 +3,7 @@ import customerModel from "../model/customerModel.js";
 import priceModel from "../model/priceModel.js";
 import temporaryTransporterModel from "../model/temporaryTransporterModel.js";
 import transporterModel from "../model/transporterModel.js";
-import PackingList from "../model/packingListModel.js";
+import PackingList from "../model/packingModel.js";
 import { redisClient } from "../db/redisDb.js";
 import {
   calculateDistanceBetweenPincode,
