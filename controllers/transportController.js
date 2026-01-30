@@ -15,14 +15,16 @@ import {
 } from "../utils/shipmentValidation.js";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createRequire } from "module";
 import fs from "fs";
 import dotenv from "dotenv";
 
-// PERFORMANCE: Import worker pool for parallel vendor calculations
-const workerPool = require("../services/worker-pool.service.js");
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// PERFORMANCE: Import worker pool (CommonJS module) for parallel vendor calculations
+const require = createRequire(import.meta.url);
+const workerPool = require("../services/worker-pool.service.js");
 
 dotenv.config();
 import {
@@ -34,9 +36,6 @@ import {
   validatePincode,
   sanitizeString,
 } from "../utils/validators.js";
-import redisClient from "../utils/redisClient.js";
-
-dotenv.config();
 
 // ============================================================================
 // PERFORMANCE OPTIMIZATION: Pre-calculate volumetric weights for common kFactors
