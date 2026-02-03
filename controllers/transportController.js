@@ -2127,7 +2127,7 @@ export const savePckingList = async (req, res) => {
         message: "Please fill all the fields",
       });
     }
-    const data = await new packingModel({
+    const data = await new PackingList({
       customerId,
       name,
       modeoftransport,
@@ -2157,7 +2157,7 @@ export const savePckingList = async (req, res) => {
 export const getPackingList = async (req, res) => {
   try {
     const { customerId } = req.query;
-    const data = await packingModel.find({ customerId });
+    const data = await PackingList.find({ customerId });
     if (data) {
       return res.status(200).json({
         success: true,
