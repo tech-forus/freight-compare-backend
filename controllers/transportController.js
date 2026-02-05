@@ -158,18 +158,57 @@ function getUnitPriceFromPriceChart(priceChart, originZoneCode, destZoneCode) {
 
 export const deletePackingList = async (req, res) => {
   try {
-    const preset = await PackingList.findById(req.params.id);
+    const presetId = req.params.id;
+
+    if (!mongoose.Types.ObjectId.isValid(presetId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid preset id",
+      });
+    }
+
+    const preset = await PackingList.findById(presetId);
 
     if (!preset) {
-      return res.status(404).json({ message: "Preset not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Preset not found",
+      });
+    }
+
+    const authCustomerId = req.customer?._id?.toString();
+    const presetCustomerId = preset.customerId?.toString();
+
+    if (!req.customer?._id) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (req.customer?.isAdmin !== true && authCustomerId !== presetCustomerId) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
     }
 
     await preset.deleteOne();
 
-    res.status(200).json({ message: "Preset deleted successfully" });
+    return res.status(200).json({
+      success: true,
+      message: "Preset deleted successfully",
+    });
   } catch (error) {
-    console.error("Error deleting preset:", error);
-    res.status(500).json({ message: "Server error while deleting preset." });
+    console.error("[PackingList] deletePackingList failed", {
+      presetId: req.params?.id,
+      authCustomerId: req.customer?._id,
+      error: error?.message,
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Server error while deleting preset.",
+    });
   }
 };
 
@@ -2110,8 +2149,25 @@ export const savePckingList = async (req, res) => {
       height,
       weight,
     } = req.body;
+
+    const authCustomerId = req.customer?._id?.toString();
+    const effectiveCustomerId = (req.customer?.isAdmin ? customerId : authCustomerId) || authCustomerId || customerId;
+
+    if (!effectiveCustomerId) {
+      return res.status(400).json({
+        success: false,
+        message: "customerId is required",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(effectiveCustomerId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid customerId",
+      });
+    }
+
     if (
-      !customerId ||
       !name ||
       !modeoftransport ||
       !originPincode ||
@@ -2128,7 +2184,7 @@ export const savePckingList = async (req, res) => {
       });
     }
     const data = await new PackingList({
-      customerId,
+      customerId: new mongoose.Types.ObjectId(effectiveCustomerId),
       name,
       modeoftransport,
       originPincode,
@@ -2146,7 +2202,11 @@ export const savePckingList = async (req, res) => {
       });
     }
   } catch (error) {
-    // DEBUG LOG REMOVED
+    console.error("[PackingList] savePckingList failed", {
+      customerId: req.body?.customerId,
+      authCustomerId: req.customer?._id,
+      error: error?.message,
+    });
     return res.status(500).json({
       success: false,
       message: "Server Error",
@@ -2156,25 +2216,67 @@ export const savePckingList = async (req, res) => {
 
 export const getPackingList = async (req, res) => {
   try {
-    const { customerId } = req.query;
-    const data = await PackingList.find({ customerId });
-    if (data) {
-      return res.status(200).json({
-        success: true,
-        message: "Packing list found successfully",
-        data: data,
-      });
-    } else {
-      return res.status(404).json({
+    const queryCustomerId =
+      req.query?.customerId || req.query?.customerID || req.query?.customerid;
+    const authCustomerId = req.customer?._id?.toString();
+    const effectiveCustomerId = (queryCustomerId || authCustomerId)?.toString();
+
+    if (!effectiveCustomerId) {
+      return res.status(400).json({
         success: false,
-        message: "Packing list not found",
+        message: "customerId is required",
+        data: [],
       });
     }
+
+    if (!mongoose.Types.ObjectId.isValid(effectiveCustomerId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid customerId",
+        data: [],
+      });
+    }
+
+    if (!req.customer?._id) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+        data: [],
+      });
+    }
+
+    if (
+      req.customer?.isAdmin !== true &&
+      authCustomerId &&
+      effectiveCustomerId !== authCustomerId
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+        data: [],
+      });
+    }
+
+    const data = await PackingList.find({
+      customerId: new mongoose.Types.ObjectId(effectiveCustomerId),
+    })
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      message: "Packing list found successfully",
+      data,
+    });
   } catch (error) {
-    // DEBUG LOG REMOVED
+    console.error("[PackingList] getPackingList failed", {
+      query: req.query,
+      authCustomerId: req.customer?._id,
+      error: error?.message,
+    });
     return res.status(500).json({
       success: false,
       message: "Server Error",
+      data: [],
     });
   }
 };
