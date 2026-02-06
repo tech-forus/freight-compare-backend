@@ -28,7 +28,12 @@ import {
   // Regular transporter verification functions
   getRegularTransporters,
   updateTransporterStatus,
-  toggleTransporterVerification
+  toggleTransporterVerification,
+  // Box Library CRUD
+  getBoxLibraries,
+  createBoxLibrary,
+  updateBoxLibrary,
+  deleteBoxLibrary
 } from '../controllers/transportController.js';
 
 import {
@@ -114,5 +119,11 @@ router.delete('/zone-matrix/:vendorId', protect, deleteZoneMatrix);
 // Wizard Data Sync endpoints
 router.post('/wizard-data', protect, saveWizardData);
 router.get('/wizard-data', protect, getWizardData);
+
+// Box Library CRUD endpoints (sync across devices)
+router.get('/box-libraries', protect, getBoxLibraries);
+router.post('/box-libraries', protect, createBoxLibrary);
+router.put('/box-libraries/:id', protect, updateBoxLibrary);
+router.delete('/box-libraries/:id', protect, deleteBoxLibrary);
 
 export default router;

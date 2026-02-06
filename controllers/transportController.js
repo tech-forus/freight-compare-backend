@@ -4,6 +4,7 @@ import priceModel from "../model/priceModel.js";
 import temporaryTransporterModel from "../model/temporaryTransporterModel.js";
 import transporterModel from "../model/transporterModel.js";
 import PackingList from "../model/packingModel.js";
+import BoxLibrary from "../model/boxLibraryModel.js";
 import redisClient from "../utils/redisClient.js";
 import { calculateDistanceBetweenPincode } from "../utils/distanceService.js";
 import { zoneForPincode } from "../src/utils/pincodeZoneLookup.js";
@@ -3002,6 +3003,223 @@ export const searchTransporters = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || "Search failed"
+    });
+  }
+};
+
+// =============================================================================
+// BOX LIBRARY CRUD OPERATIONS
+// These functions persist Box Libraries to MongoDB (tied to customer account)
+// =============================================================================
+
+/**
+ * GET /api/transporter/box-libraries
+ * Fetch all box libraries for the authenticated user
+ */
+export const getBoxLibraries = async (req, res) => {
+  try {
+    const authCustomerId = req.customer?._id?.toString();
+
+    if (!authCustomerId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+        data: [],
+      });
+    }
+
+    const libraries = await BoxLibrary.find({
+      customerId: new mongoose.Types.ObjectId(authCustomerId),
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      message: "Libraries fetched successfully",
+      data: libraries,
+    });
+  } catch (error) {
+    console.error("[BoxLibrary] getBoxLibraries failed", {
+      authCustomerId: req.customer?._id,
+      error: error?.message,
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+      data: [],
+    });
+  }
+};
+
+/**
+ * POST /api/transporter/box-libraries
+ * Create a new box library
+ */
+export const createBoxLibrary = async (req, res) => {
+  try {
+    const { name, category, boxes } = req.body;
+    const authCustomerId = req.customer?._id?.toString();
+
+    if (!authCustomerId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Library name is required",
+      });
+    }
+
+    // Create new library
+    const newLibrary = await new BoxLibrary({
+      customerId: new mongoose.Types.ObjectId(authCustomerId),
+      name: name.trim(),
+      category: category || "general",
+      boxes: Array.isArray(boxes) ? boxes : [],
+    }).save();
+
+    return res.status(201).json({
+      success: true,
+      message: "Library created successfully",
+      data: newLibrary,
+    });
+  } catch (error) {
+    console.error("[BoxLibrary] createBoxLibrary failed", {
+      authCustomerId: req.customer?._id,
+      error: error?.message,
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+/**
+ * PUT /api/transporter/box-libraries/:id
+ * Update an existing box library (rename, change category, add/remove boxes)
+ */
+export const updateBoxLibrary = async (req, res) => {
+  try {
+    const libraryId = req.params.id;
+    const { name, category, boxes } = req.body;
+    const authCustomerId = req.customer?._id?.toString();
+
+    if (!authCustomerId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(libraryId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid library ID",
+      });
+    }
+
+    // Find and verify ownership
+    const library = await BoxLibrary.findById(libraryId);
+
+    if (!library) {
+      return res.status(404).json({
+        success: false,
+        message: "Library not found",
+      });
+    }
+
+    if (library.customerId.toString() !== authCustomerId) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    // Update fields
+    if (name && name.trim()) library.name = name.trim();
+    if (category) library.category = category;
+    if (Array.isArray(boxes)) library.boxes = boxes;
+
+    await library.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Library updated successfully",
+      data: library,
+    });
+  } catch (error) {
+    console.error("[BoxLibrary] updateBoxLibrary failed", {
+      libraryId: req.params?.id,
+      authCustomerId: req.customer?._id,
+      error: error?.message,
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+/**
+ * DELETE /api/transporter/box-libraries/:id
+ * Delete a box library
+ */
+export const deleteBoxLibrary = async (req, res) => {
+  try {
+    const libraryId = req.params.id;
+    const authCustomerId = req.customer?._id?.toString();
+
+    if (!authCustomerId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(libraryId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid library ID",
+      });
+    }
+
+    const library = await BoxLibrary.findById(libraryId);
+
+    if (!library) {
+      return res.status(404).json({
+        success: false,
+        message: "Library not found",
+      });
+    }
+
+    if (library.customerId.toString() !== authCustomerId) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    await library.deleteOne();
+
+    return res.status(200).json({
+      success: true,
+      message: "Library deleted successfully",
+    });
+  } catch (error) {
+    console.error("[BoxLibrary] deleteBoxLibrary failed", {
+      libraryId: req.params?.id,
+      authCustomerId: req.customer?._id,
+      error: error?.message,
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Server error while deleting library",
     });
   }
 };
