@@ -761,43 +761,79 @@ router.get('/nearest-serviceable', (req, res) => {
       });
     }
 
-    // Scan ±1 to ±500 in alternating order: +1, -1, +2, -2, ...
-    // Use calculatePrice() to VERIFY actual pricing (not just serviceability)
-    for (let delta = 1; delta <= 500; delta++) {
-      const candidates = [basePincode + delta, basePincode - delta].filter(
-        p => p >= 100000 && p <= 999999
-      );
+    // Optimized Search (O(P) instead of O(N*Transporters))
+    // 1. Gather all unique serviceable pincodes from relevant transporters
+    const allServiceablePins = new Set();
+    transporters.forEach(t => {
+      const pins = t.getServedPincodes(); // Helper we just added
+      pins.forEach(p => allServiceablePins.add(p));
+    });
 
-      for (const candidatePin of candidates) {
-        const pinStr = String(candidatePin);
-        const servedBy = [];
+    if (allServiceablePins.size === 0) {
+      return res.json({
+        success: false,
+        message: 'No serviceable pincodes found in relevant transporters',
+        nearestPincode: null
+      });
+    }
 
-        for (const t of transporters) {
-          // Actually calculate a price — this checks serviceability + zone pricing
-          const result = t.calculatePrice(
-            parseInt(fromPincode, 10),
-            candidatePin,
-            100 // test weight of 100kg
-          );
+    // 2. Convert to array and find closest candidates
+    // Filter to be within reasonable range (+/- 1000 is usually enough for "nearby", but we can go wider if needed)
+    // Actually, since we have the full list, let's just sort by difference and take top candidates.
+    const allCandidates = Array.from(allServiceablePins)
+      .map(p => ({
+        pincode: p,
+        diff: Math.abs(p - basePincode)
+      }))
+      .filter(c => c.diff > 0);
 
-          // If no error field, this transporter can actually price this route
-          if (result && !result.error && result.totalCharges > 0) {
-            servedBy.push(t.companyName);
-          }
-        }
+    // Filter preferred range (diff 2 to 4) and others
+    const preferred = allCandidates.filter(c => c.diff >= 2 && c.diff <= 4);
+    const others = allCandidates.filter(c => c.diff < 2 || c.diff > 4).sort((a, b) => a.diff - b.diff);
 
-        if (servedBy.length > 0) {
-          return res.json({
-            success: true,
-            nearestPincode: pinStr,
-            originalPincode: pincode,
-            distance: delta,
-            servedBy,
-            message: `Found priceable pincode ${pinStr} (±${delta} from ${pincode})`
-          });
+    // Shuffle preferred to add "randomness" as requested
+    for (let i = preferred.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [preferred[i], preferred[j]] = [preferred[j], preferred[i]];
+    }
+
+    const candidates = [...preferred, ...others].slice(0, 20);
+
+    // 3. Verify pricing for candidates in order
+    for (const cand of candidates) {
+      const pinStr = String(cand.pincode);
+      const servedBy = [];
+
+      for (const t of transporters) {
+        // Must verify PRICE, not just serviceability (zone-to-zone check)
+        const result = t.calculatePrice(
+          parseInt(fromPincode, 10),
+          cand.pincode,
+          100 // test weight
+        );
+
+        if (result && !result.error && result.totalCharges > 0) {
+          servedBy.push(t.companyName);
         }
       }
+
+      if (servedBy.length > 0) {
+        return res.json({
+          success: true,
+          nearestPincode: pinStr,
+          originalPincode: pincode,
+          distance: cand.diff,
+          servedBy,
+          message: `Found priceable pincode ${pinStr} (±${cand.diff} from ${pincode})`
+        });
+      }
     }
+
+    return res.json({
+      success: false,
+      message: 'No nearby pincodes found with valid pricing (checked closest 20)',
+      nearestPincode: null
+    });
 
     // Nothing found within ±500
     res.json({

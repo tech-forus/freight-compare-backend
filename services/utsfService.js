@@ -211,6 +211,15 @@ class UTSFTransporter {
   get transporterType() { return this._data.meta?.transporterType || 'regular'; }
   get rating() { return this._data.meta?.rating || 4.0; }
   get isVerified() { return this._data.meta?.isVerified || false; }
+  
+  /**
+   * Get all serviceable pincodes for this transporter
+   * Returns an array of numbers
+   */
+  getServedPincodes() {
+    // Return array from the Set
+    return Array.from(this._servedPincodes);
+  }
 
   /** Get all soft-excluded pincodes (temporary blocks that can be auto-lifted) */
   getSoftExclusions() {

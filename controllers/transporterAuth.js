@@ -16,7 +16,9 @@ dotenv.config();
 
 const BCRYPT_SALT_ROUNDS = 10;
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = process.env.RESEND_API_KEY
+  ? new Resend(process.env.RESEND_API_KEY)
+  : { emails: { send: async () => { throw new Error("RESEND_API_KEY not configured"); } } };
 
 
 export const addTransporter = async (req, res) => {
