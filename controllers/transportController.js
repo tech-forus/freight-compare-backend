@@ -2959,15 +2959,18 @@ export const searchTransporters = async (req, res) => {
       }
     };
 
+    // Only show approved vendors (matching calculator page behavior)
+    const approvedOnly = { approvalStatus: 'approved' };
+
     const tempQuery = customerID
-      ? { $and: [{ $or: searchOr }, { customerID: customerID }, excludeTestNames] }
-      : { $and: [{ $or: searchOr }, excludeTestNames] };
+      ? { $and: [{ $or: searchOr }, { customerID: customerID }, excludeTestNames, approvedOnly] }
+      : { $and: [{ $or: searchOr }, excludeTestNames, approvedOnly] };
 
     // Search both collections
     const [publicTransporters, tempTransporters] = await Promise.all([
       transporterModel
-        .find({ $and: [{ $or: searchOr }, excludeTestNames] })
-        .select('companyName displayName vendorCode vendorPhone vendorEmail gstNo address state city pincode rating selectedZones serviceZones serviceableZones servicableZones zoneConfig service')
+        .find({ $and: [{ $or: searchOr }, excludeTestNames, approvedOnly] })
+        .select('companyName displayName vendorCode vendorPhone vendorEmail gstNo address state city pincode rating selectedZones serviceZones serviceableZones servicableZones zoneConfig service approvalStatus')
         .limit(limitNum)
         .lean(),
 
@@ -2985,8 +2988,10 @@ export const searchTransporters = async (req, res) => {
     if (customerID) {
       const allUtsf = utsfService.getTransportersByCustomerId(customerID);
 
-      // Filter by search query
+      // Filter by search query and approval status (only approved vendors)
       for (const t of allUtsf) {
+        const utsfApproval = t.data.meta?.approvalStatus || 'pending';
+        if (utsfApproval !== 'approved') continue;
         if (
           searchRegex.test(t.companyName) ||
           (t.vendorCode && searchRegex.test(t.vendorCode)) ||
@@ -3194,6 +3199,187 @@ export const searchTransporters = async (req, res) => {
       success: false,
       message: error.message || "Search failed"
     });
+  }
+};
+
+// =============================================================================
+// SEARCH TRANSPORTER DETAIL (by ID + source)
+// Used by AddVendor page to fetch full vendor data after Quick Lookup selection
+// =============================================================================
+export const getSearchTransporterDetail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { source, customerID } = req.query;
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'Transporter ID is required' });
+    }
+
+    let vendor = null;
+
+    // UTSF source
+    if (source === 'utsf' && customerID) {
+      const t = utsfService.getTransporterById ? utsfService.getTransporterById(id) : null;
+      if (t) {
+        const zoneKeys = Object.keys(t.serviceability || {});
+        // Build serviceability array from UTSF
+        const serviceabilityArr = [];
+        for (const [zone, pincodes] of Object.entries(t.serviceability || {})) {
+          if (Array.isArray(pincodes)) {
+            pincodes.forEach(p => {
+              serviceabilityArr.push({
+                pincode: typeof p === 'object' ? String(p.pincode || '') : String(p),
+                zone,
+                state: typeof p === 'object' ? (p.state || '') : '',
+                city: typeof p === 'object' ? (p.city || '') : '',
+                isODA: typeof p === 'object' ? (p.isODA || false) : false,
+              });
+            });
+          }
+        }
+        vendor = {
+          id: t.id,
+          source: 'utsf',
+          isTemporary: true,
+          companyName: t.companyName,
+          legalCompanyName: t.companyName,
+          displayName: t.companyName,
+          vendorCode: t.vendorCode || '',
+          vendorPhone: t.data?.meta?.phone || '',
+          vendorEmail: t.data?.meta?.email || '',
+          gstNo: t.data?.meta?.gstNo || '',
+          contactPersonName: t.data?.meta?.contactPersonName || '',
+          subVendor: '',
+          address: t.data?.meta?.address || '',
+          state: t.data?.meta?.state || '',
+          city: t.data?.meta?.city || '',
+          pincode: t.data?.meta?.pincode || '',
+          mode: t.data?.meta?.transportMode || 'Road',
+          transportMode: t.data?.meta?.transportMode || 'Road',
+          rating: t.rating || 4,
+          zones: zoneKeys,
+          zoneConfigs: zoneKeys.map(z => ({
+            zoneCode: z, zoneName: z,
+            region: z.startsWith('NE') ? 'Northeast' : z.startsWith('N') ? 'North' : z.startsWith('S') ? 'South' : z.startsWith('E') ? 'East' : z.startsWith('W') ? 'West' : z.startsWith('C') ? 'Central' : 'Other',
+            selectedStates: [], selectedCities: [], isComplete: true,
+          })),
+          serviceability: serviceabilityArr,
+        };
+      }
+    }
+    // Temporary transporter
+    else if (source === 'temporary') {
+      const t = await temporaryTransporterModel.findById(id).lean();
+      if (t) {
+        const zoneCodes = t.selectedZones || Object.keys(t.zoneConfig instanceof Map ? Object.fromEntries(t.zoneConfig) : (t.zoneConfig || {}));
+        let zoneConfigs = [];
+        if (t.zoneConfigurations?.length > 0) {
+          zoneConfigs = t.zoneConfigurations;
+        } else {
+          zoneConfigs = zoneCodes.map(z => ({
+            zoneCode: z, zoneName: z,
+            region: z.startsWith('NE') ? 'Northeast' : z.startsWith('N') ? 'North' : z.startsWith('S') ? 'South' : z.startsWith('E') ? 'East' : z.startsWith('W') ? 'West' : z.startsWith('C') ? 'Central' : 'Other',
+            selectedStates: [], selectedCities: [], isComplete: false,
+          }));
+        }
+        vendor = {
+          id: t._id?.toString(),
+          source: 'temporary',
+          isTemporary: true,
+          companyName: t.companyName,
+          legalCompanyName: t.companyName,
+          displayName: t.displayName || t.companyName,
+          contactPersonName: t.contactPersonName || '',
+          vendorCode: t.vendorCode || '',
+          vendorPhone: t.vendorPhone || '',
+          vendorEmail: t.vendorEmail || '',
+          gstNo: t.gstNo || '',
+          subVendor: t.subVendor || '',
+          address: t.address || '',
+          state: t.state || '',
+          city: t.city || '',
+          pincode: t.pincode || '',
+          mode: t.transportMode || 'Road',
+          transportMode: t.transportMode || 'Road',
+          serviceMode: t.serviceMode || '',
+          rating: t.rating || 4,
+          zones: zoneCodes,
+          zoneConfigs,
+          volumetricUnit: t.volumetricUnit || 'cm',
+          cftFactor: t.cftFactor || null,
+          charges: {
+            ...(t.prices?.priceRate || {}),
+            divisor: t.prices?.priceRate?.divisor || 5000,
+          },
+          priceChart: t.prices?.priceChart || {},
+          invoiceValueCharges: t.prices?.invoiceValueCharges || {},
+          serviceability: t.serviceability || [],
+          serviceabilityChecksum: t.serviceabilityChecksum || '',
+          serviceabilitySource: t.serviceabilitySource || '',
+        };
+      }
+    }
+    // Public (regular) transporter
+    else if (source === 'public') {
+      const t = await transporterModel.findById(id).lean();
+      if (t) {
+        const zones = t.serviceZones || t.serviceableZones || t.servicableZones || t.selectedZones || [];
+        const zoneConfigKeys = Object.keys(t.zoneConfig || {});
+        const finalZones = zones.length > 0 ? zones : zoneConfigKeys;
+
+        // Build serviceability from service array
+        const serviceability = (t.service || []).map(s => {
+          if (typeof s === 'string') return { pincode: s, zone: '', state: '', city: '', isODA: false };
+          return {
+            pincode: String(s.pincode || s.Pincode || ''),
+            zone: String(s.zone || s.Zone || '').toUpperCase(),
+            state: s.state || s.State || '',
+            city: s.city || s.City || '',
+            isODA: s.isODA || s.IsODA || false,
+          };
+        });
+
+        vendor = {
+          id: t._id?.toString(),
+          source: 'public',
+          isTemporary: false,
+          companyName: t.companyName,
+          legalCompanyName: t.companyName,
+          displayName: t.displayName || t.companyName,
+          contactPersonName: '',
+          vendorCode: t.vendorCode || '',
+          vendorPhone: t.vendorPhone || t.phone || '',
+          vendorEmail: t.vendorEmail || t.email || '',
+          gstNo: t.gstNo || '',
+          subVendor: '',
+          address: t.address || '',
+          state: t.state || '',
+          city: t.city || '',
+          pincode: t.pincode || '',
+          mode: 'Road',
+          transportMode: 'Road',
+          rating: t.rating || 4,
+          zones: finalZones.map(z => String(z).toUpperCase()),
+          zoneConfigs: finalZones.map(z => ({
+            zoneCode: String(z).toUpperCase(),
+            zoneName: String(z).toUpperCase(),
+            region: String(z).startsWith('NE') ? 'Northeast' : String(z).startsWith('N') ? 'North' : String(z).startsWith('S') ? 'South' : String(z).startsWith('E') ? 'East' : String(z).startsWith('W') ? 'West' : String(z).startsWith('C') ? 'Central' : 'Other',
+            selectedStates: [], selectedCities: [], isComplete: false,
+          })),
+          serviceability,
+          serviceabilityCount: t.service?.length || 0,
+        };
+      }
+    }
+
+    if (!vendor) {
+      return res.status(404).json({ success: false, message: 'Transporter not found' });
+    }
+
+    return res.status(200).json({ success: true, data: vendor });
+  } catch (error) {
+    console.error('[DETAIL] Error:', error.message);
+    return res.status(500).json({ success: false, message: error.message || 'Detail fetch failed' });
   }
 };
 

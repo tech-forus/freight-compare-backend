@@ -25,6 +25,7 @@ import {
   saveWizardData,
   getWizardData,
   searchTransporters,  // Quick Lookup search (minimal data)
+  getSearchTransporterDetail,  // Quick Lookup detail (full data by ID)
   // Regular transporter verification functions
   getRegularTransporters,
   updateTransporterStatus,
@@ -68,6 +69,7 @@ router.post("/auth/signin", authLimiter, transporterLogin);
 // Calculator & add vendor
 router.post('/calculate', protect, calculatePrice);
 router.get('/search-transporters', protect, searchTransporters);  // Fast search - minimal data
+router.get('/search-transporters/:id', protect, getSearchTransporterDetail);  // Full detail by ID
 router.post("/addtiedupcompanies", protect, upload.single('priceChart'), addTiedUpCompany);
 router.post("/add-tied-up", protect, addTiedUpCompany);
 
