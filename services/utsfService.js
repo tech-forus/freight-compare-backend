@@ -174,6 +174,9 @@ class UTSFTransporter {
     });
 
     // Build ODA index
+    if (Array.isArray(this._data.odaPincodes)) {
+      this._data.odaPincodes.forEach(p => this._odaPincodes.add(p));
+    }
     Object.values(odaData).forEach(odaInfo => {
       // Robust access: Try camelCase, then snake_case
       const odaRanges = odaInfo.odaRanges || odaInfo.oda_ranges || [];
@@ -211,7 +214,7 @@ class UTSFTransporter {
   get transporterType() { return this._data.meta?.transporterType || 'regular'; }
   get rating() { return this._data.meta?.rating || 4.0; }
   get isVerified() { return this._data.meta?.isVerified || false; }
-  
+
   /**
    * Get all serviceable pincodes for this transporter
    * Returns an array of numbers
@@ -432,9 +435,17 @@ class UTSFTransporter {
       return { error: `Destination ${toPincode}: ${toResult.reason}` };
     }
 
-    const originZone = fromResult.zone;
-    const destZone = toResult.zone;
-    const unitPrice = this.getZoneRate(originZone, destZone);
+    // Use transporter zone overrides for rate lookup if available (v3.0)
+    // This ensures per-pincode rates (e.g., Safexpress W2_13 = ₹13/kg) are used
+    // instead of the master zone rate (e.g., W2 = ₹14/kg)
+    const originZone = fromResult.transporterZone || fromResult.zone;
+    const destZone = toResult.transporterZone || toResult.zone;
+    let unitPrice = this.getZoneRate(originZone, destZone);
+
+    // Fallback: if override zone combo has no rate, try master zones
+    if (unitPrice === null && (fromResult.transporterZone || toResult.transporterZone)) {
+      unitPrice = this.getZoneRate(fromResult.zone, toResult.zone);
+    }
 
     if (unitPrice === null) {
       return { error: `No rate for zone combination ${originZone} -> ${destZone}` };
@@ -442,12 +453,29 @@ class UTSFTransporter {
 
     const pr = this.priceRate;
 
-    // Base freight
-    const baseFreight = unitPrice * chargeableWeight;
+    // Apply minimum billable weight (carriers specify a floor, e.g. Safexpress=20kg, DBS=50kg).
+    // Only affects base freight — ODA and handling still use the actual chargeableWeight.
+    const effectiveWeight = (pr.minWeight && pr.minWeight > chargeableWeight)
+      ? pr.minWeight
+      : chargeableWeight;
 
-    // Apply minimum charges as floor (line 826)
-    const minCharges = pr.minCharges || 0;
-    const effectiveBaseFreight = Math.max(baseFreight, minCharges);
+    // Base freight
+    const baseFreight = unitPrice * effectiveWeight;
+
+    // Apply minimum charges as floor to BASE freight (if configured as minBase)
+    // DEPRECATED: Old behavior used minCharges as base floor. 
+    // v4.0: Support distinct minBaseFreight vs minTotalCharges
+    const minBaseFreight = pr.minBaseFreight || pr.minCharges || 0;
+
+    // NOTE: For DB Schenker, "Min Freight 400" acts as a TOTAL floor in Excel formulas.
+    // We will handle total floor at the end. 
+    // However, strict UTSF spec usually treats minCharges as base floor.
+    // To fix Test 1 without breaking others, we will rely on a new 'minTotalCharges' key if present,
+    // OR if specific legacy logic requires it.
+
+    // For now, keep effectiveBaseFreight for backward compatibility but allow skipping it
+    // if 'minChargesApplyToTotal' is true
+    const effectiveBaseFreight = pr.minChargesApplyToTotal ? baseFreight : Math.max(baseFreight, minBaseFreight);
 
     // Fixed charges
     const docketCharge = pr.docketCharges || 0;
@@ -456,7 +484,7 @@ class UTSFTransporter {
     const miscCharges = pr.miscellanousCharges || pr.miscCharges || 0;
 
     // Fuel charges (percentage of baseFreight, NOT effectiveBase - line 799)
-    const fuelCharges = ((pr.fuel || 0) / 100) * baseFreight;
+    const fuelCharges = Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity);
 
     // Helper for variable/fixed charges (max of percentage * baseFreight or fixed)
     const computeCharge = (config) => {
@@ -481,13 +509,25 @@ class UTSFTransporter {
     const handlingWeight = Math.max(0, chargeableWeight - thresholdWeight);
     const handlingCharges = handlingFixed + (handlingWeight * handlingVariable / 100);
 
-    // ODA charges: fixed + weight * variable% if destination is ODA (lines 808-811)
+    // ODA charges: mode-based calculation if destination is ODA (lines 808-811)
     let odaCharges = 0;
     if (toResult.isOda) {
       const odaConfig = pr.odaCharges || {};
       const odaFixed = odaConfig.f !== undefined ? odaConfig.f : (odaConfig.fixed || 0);
-      const odaVariable = odaConfig.v !== undefined ? odaConfig.v : (odaConfig.variable || 0);
-      odaCharges = odaFixed + (chargeableWeight * odaVariable / 100);
+      const odaVar = odaConfig.v !== undefined ? odaConfig.v : (odaConfig.variable || 0);
+      const odaThreshold = odaConfig.thresholdWeight || 0;
+      const odaMode = odaConfig.mode || 'legacy';
+
+      if (odaMode === 'switch') {
+        // DB Schenker: if wt <= threshold → fixed, else rate * wt
+        odaCharges = chargeableWeight <= odaThreshold ? odaFixed : odaVar * chargeableWeight;
+      } else if (odaMode === 'excess') {
+        // Shipshopy: fixed + max(0, wt - threshold) * rate
+        odaCharges = odaFixed + Math.max(0, chargeableWeight - odaThreshold) * odaVar;
+      } else {
+        // legacy: fixed + weight * variable%
+        odaCharges = odaFixed + (chargeableWeight * odaVar / 100);
+      }
     }
 
     // Invoice value charges
@@ -500,7 +540,7 @@ class UTSFTransporter {
     }
 
     // Total (lines 828-841)
-    const totalChargesBeforeAddon =
+    let totalChargesBeforeAddon =
       effectiveBaseFreight +
       docketCharge +
       greenTax +
@@ -514,6 +554,13 @@ class UTSFTransporter {
       fmCharges +
       appointmentCharges +
       invoiceValueCharges;
+
+    // Apply minimum total charges if configured (e.g., DB Schenker 400 INR is total floor)
+    // This uses the minBaseFreight key if minApplyToTotal is true, OR an explicit minTotalCharges key
+    const minTotal = pr.minTotalCharges || (pr.minChargesApplyToTotal ? (pr.minBaseFreight || pr.minCharges || 0) : 0);
+    if (totalChargesBeforeAddon < minTotal) {
+      totalChargesBeforeAddon = minTotal;
+    }
 
     const breakdown = {
       baseFreight: Math.round(baseFreight * 100) / 100,
@@ -698,6 +745,10 @@ class UTSFService {
           customerID: transporter.customerID,
           rating: transporter.rating,
           isVerified: transporter.isVerified,
+          vendorRatings: transporter.vendorRatings || null,
+          totalRatings: transporter._data?.meta?.totalRatings || 0,
+          approvalStatus: transporter._data?.meta?.approvalStatus || 'approved',
+          transporterType: transporter.transporterType,
           ...priceResult,
           source: 'utsf'
         });

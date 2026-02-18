@@ -15,6 +15,7 @@ import fs from "fs";
 import dotenv from "dotenv";
 import workerPool from "../services/worker-pool.service.js";
 import utsfService from "../services/utsfService.js";
+import { validateAllQuotes } from "../utils/smartShield.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -555,6 +556,14 @@ export const calculatePrice = async (req, res) => {
     const fromPinStr = String(fromPincode).trim();
     const toPinStr = String(toPincode).trim();
 
+    // Validate customerID format before DB queries to prevent CastError
+    if (!mongoose.Types.ObjectId.isValid(customerID)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid customer ID format.",
+      });
+    }
+
     try {
       // PERFORMANCE: Run all 3 DB queries in PARALLEL instead of sequential
       console.time(`[${rid}] DB_PARALLEL`);
@@ -697,6 +706,7 @@ export const calculatePrice = async (req, res) => {
       console.time(`[${rid}] BUILD tiedUpResult`);
       const tiedUpRaw = await Promise.all(
         tiedUpCompanies.map(async (tuc) => {
+          try {
           const companyName = tuc.companyName;
           if (!companyName) return null;
 
@@ -791,7 +801,7 @@ export const calculatePrice = async (req, res) => {
           const greenTax = pr.greenTax || 0;
           const daccCharges = pr.daccCharges || 0;
           const miscCharges = pr.miscellanousCharges || 0;
-          const fuelCharges = ((pr.fuel || 0) / 100) * baseFreight;
+          const fuelCharges = Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity);
           const rovCharges = Math.max(
             ((pr.rovCharges?.variable || 0) / 100) * baseFreight,
             pr.rovCharges?.fixed || 0
@@ -800,10 +810,20 @@ export const calculatePrice = async (req, res) => {
             ((pr.insuaranceCharges?.variable || 0) / 100) * baseFreight,
             pr.insuaranceCharges?.fixed || 0
           );
-          const odaCharges = destIsOda
-            ? (pr.odaCharges?.fixed || 0) +
-            chargeableWeight * ((pr.odaCharges?.variable || 0) / 100)
-            : 0;
+          let odaCharges = 0;
+          if (destIsOda) {
+            const odaFixed = pr.odaCharges?.fixed || pr.odaCharges?.f || 0;
+            const odaVar = pr.odaCharges?.variable || pr.odaCharges?.v || 0;
+            const odaThreshold = pr.odaCharges?.thresholdWeight || 0;
+            const odaMode = pr.odaCharges?.mode || 'legacy';
+            if (odaMode === 'switch') {
+              odaCharges = chargeableWeight <= odaThreshold ? odaFixed : odaVar * chargeableWeight;
+            } else if (odaMode === 'excess') {
+              odaCharges = odaFixed + Math.max(0, chargeableWeight - odaThreshold) * odaVar;
+            } else {
+              odaCharges = odaFixed + (chargeableWeight * odaVar / 100);
+            }
+          }
           const handlingCharges =
             (pr.handlingCharges?.fixed || 0) +
             chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100);
@@ -922,6 +942,10 @@ export const calculatePrice = async (req, res) => {
             totalRatings: tuc.totalRatings || 0,
           };
 
+          } catch (error) {
+            console.error(`  [ERROR] Failed processing tied-up vendor ${tuc.companyName || tuc._id}:`, error.message);
+            return null;
+          }
         })
       );
       const tiedUpResult = tiedUpRaw.filter((r) => r);
@@ -1037,7 +1061,7 @@ export const calculatePrice = async (req, res) => {
             const greenTax = pr.greenTax || 0;
             const daccCharges = pr.daccCharges || 0;
             const miscCharges = pr.miscellanousCharges || 0;
-            const fuelCharges = ((pr.fuel || 0) / 100) * baseFreight;
+            const fuelCharges = Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity);
             const rovCharges = Math.max(
               ((pr.rovCharges?.variable || 0) / 100) * baseFreight,
               pr.rovCharges?.fixed || 0
@@ -1046,10 +1070,20 @@ export const calculatePrice = async (req, res) => {
               ((pr.insuaranceCharges?.variable || 0) / 100) * baseFreight,
               pr.insuaranceCharges?.fixed || 0
             );
-            const odaCharges = isDestOda
-              ? (pr.odaCharges?.fixed || 0) +
-              chargeableWeight * ((pr.odaCharges?.variable || 0) / 100)
-              : 0;
+            let odaCharges = 0;
+            if (isDestOda) {
+              const odaFixed = pr.odaCharges?.fixed || pr.odaCharges?.f || 0;
+              const odaVar = pr.odaCharges?.variable || pr.odaCharges?.v || 0;
+              const odaThreshold = pr.odaCharges?.thresholdWeight || 0;
+              const odaMode = pr.odaCharges?.mode || 'legacy';
+              if (odaMode === 'switch') {
+                odaCharges = chargeableWeight <= odaThreshold ? odaFixed : odaVar * chargeableWeight;
+              } else if (odaMode === 'excess') {
+                odaCharges = odaFixed + Math.max(0, chargeableWeight - odaThreshold) * odaVar;
+              } else {
+                odaCharges = odaFixed + (chargeableWeight * odaVar / 100);
+              }
+            }
             const handlingCharges =
               (pr.handlingCharges?.fixed || 0) +
               chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100);
@@ -1185,38 +1219,83 @@ export const calculatePrice = async (req, res) => {
           invoiceValue
         );
 
-        // Transform UTSF results to match MongoDB result format
-        utsfResults = utsfResults.map(utsf => ({
-          _id: utsf.transporterId,
-          companyName: utsf.companyName,
-          customerID: utsf.customerID,
-          totalCharges: utsf.totalCharges,
-          est_time: estTime, // Use same estimated time
-          distance: dist, // Use same distance
-          zone: `${utsf.originZone} → ${utsf.destZone}`,
-          rating: utsf.rating || 4.0,
-          isVerified: utsf.isVerified || false,
-          source: 'utsf', // Mark as UTSF source
-          breakdown: {
-            baseFreight: utsf.breakdown.baseFreight,
-            effectiveBaseFreight: utsf.breakdown.effectiveBaseFreight,
-            docketCharge: utsf.breakdown.docketCharge,
-            greenTax: utsf.breakdown.greenTax,
-            daccCharges: utsf.breakdown.daccCharges,
-            miscCharges: utsf.breakdown.miscCharges,
-            fuelCharges: utsf.breakdown.fuelCharges,
-            rovCharges: utsf.breakdown.rovCharges,
-            insuaranceCharges: utsf.breakdown.insuaranceCharges,
-            odaCharges: utsf.breakdown.odaCharges,
-            handlingCharges: utsf.breakdown.handlingCharges,
-            fmCharges: utsf.breakdown.fmCharges,
-            appointmentCharges: utsf.breakdown.appointmentCharges
-          },
-          isOda: utsf.isOda || false,
-          chargeableWeight: chargeableWeight,
-          actualWeight: actualWeight,
-          volumetricWeight: defaultVolWeight
-        }));
+        // Transform UTSF results to match MongoDB result format exactly
+        // Frontend VendorResultCard expects all charge fields at TOP LEVEL (not nested)
+        utsfResults = utsfResults.map(utsf => {
+          const bd = utsf.breakdown || {};
+          // Invoice value charges from UTSF (already included in totalCharges if present)
+          const invoiceAddon = bd.invoiceValueCharges || 0;
+          const totalBeforeInvoice = utsf.totalCharges - invoiceAddon;
+
+          return {
+            // Identity fields (frontend uses companyId for navigation)
+            _id: utsf.transporterId,
+            companyId: utsf.transporterId,
+            companyName: utsf.companyName,
+            customerID: utsf.customerID,
+
+            // Route info
+            originPincode: fromPincode,
+            destinationPincode: toPincode,
+            estimatedTime: estTime,
+            distance: dist,
+
+            // Weight breakdown
+            actualWeight: parseFloat(actualWeight.toFixed(2)),
+            volumetricWeight: parseFloat(defaultVolWeight.toFixed(2)),
+            chargeableWeight: parseFloat(chargeableWeight.toFixed(2)),
+
+            // Pricing — ALL at top level (matches MongoDB result format)
+            unitPrice: utsf.unitPrice || 0,
+            baseFreight: bd.baseFreight || 0,
+            effectiveBaseFreight: bd.effectiveBaseFreight || 0,
+            docketCharge: bd.docketCharge || 0,
+            minCharges: bd.effectiveBaseFreight > bd.baseFreight
+              ? bd.effectiveBaseFreight : 0,
+            greenTax: bd.greenTax || 0,
+            daccCharges: bd.daccCharges || 0,
+            miscCharges: bd.miscCharges || 0,
+            fuelCharges: bd.fuelCharges || 0,
+            rovCharges: bd.rovCharges || 0,
+            insuaranceCharges: bd.insuaranceCharges || 0,
+            odaCharges: bd.odaCharges || 0,
+            handlingCharges: bd.handlingCharges || 0,
+            fmCharges: bd.fmCharges || 0,
+            appointmentCharges: bd.appointmentCharges || 0,
+
+            // Invoice charges
+            invoiceValue: invoiceValue,
+            invoiceAddon: Math.round(invoiceAddon),
+            invoiceValueCharge: Math.round(invoiceAddon),
+
+            // Totals
+            totalCharges: Math.round(utsf.totalCharges),
+            totalChargesWithoutInvoiceAddon: Math.round(totalBeforeInvoice),
+
+            // Also keep breakdown for detailed views
+            breakdown: bd,
+
+            // Vendor metadata
+            isOda: utsf.isOda || false,
+            isHidden: false,
+            isTemporaryTransporter: true, // UTSF vendors behave like tied-up vendors
+            isTiedUp: false, // Will be overridden below based on customerID match
+            source: 'utsf',
+            zone: `${utsf.originZone} → ${utsf.destZone}`,
+
+            // Approval & verification
+            approvalStatus: utsf.approvalStatus || 'approved',
+            isVerified: utsf.isVerified || false,
+            rating: utsf.rating || 4.0,
+            vendorRatings: utsf.vendorRatings || null,
+            totalRatings: utsf.totalRatings || 0,
+
+            // Zone config (empty for UTSF — they use file-based config)
+            selectedZones: [],
+            zoneConfig: {},
+            priceChart: {},
+          };
+        });
 
         console.timeEnd(`[${rid}] UTSF_CALC`);
         console.log(`[UTSF] Found ${utsfResults.length} UTSF transporters for route`);
@@ -1229,6 +1308,8 @@ export const calculatePrice = async (req, res) => {
       // HOT-SWITCH: UTSF takes priority over legacy MongoDB
       // =========================================================
       const utsfIds = new Set(utsfResults.map(u => String(u._id)));
+      // ALSO match by companyName (case-insensitive) to catch vendors with different IDs
+      const utsfNames = new Set(utsfResults.map(u => (u.companyName || '').trim().toLowerCase()));
 
       // FALLBACK VENDORS WHITELIST (Case-Insensitive)
       // These vendors must NEVER be filtered out, even if UTSF exists (dual-path safety)
@@ -1240,15 +1321,22 @@ export const calculatePrice = async (req, res) => {
         return FALLBACK_VENDORS.some(fv => name.includes(fv));
       };
 
+      // Check if a MongoDB result is overridden by UTSF (by _id OR companyName)
+      const isOverriddenByUtsf = (r) => {
+        if (utsfIds.has(String(r._id || r.companyId))) return true;
+        const name = (r.companyName || '').trim().toLowerCase();
+        return name && utsfNames.has(name);
+      };
+
       // 1. Filter TiedUp Results (Mutate in-place)
-      // Capture what we want to keep: (Not in UTSF) OR (Is Fallback)
-      const keptTiedUp = allTiedUpResults.filter(r => !utsfIds.has(String(r._id)) || isFallback(r));
+      // Remove MongoDB vendors that have a UTSF replacement (by ID or name)
+      const keptTiedUp = allTiedUpResults.filter(r => !isOverriddenByUtsf(r) || isFallback(r));
       // Clear and repopulate the original array
       allTiedUpResults.length = 0;
       allTiedUpResults.push(...keptTiedUp);
 
       // 2. Filter Public MongoDB Results (Mutate in-place)
-      const keptTransporter = transporterResult.filter(r => !utsfIds.has(String(r._id)) || isFallback(r));
+      const keptTransporter = transporterResult.filter(r => !isOverriddenByUtsf(r) || isFallback(r));
       transporterResult.length = 0;
       transporterResult.push(...keptTransporter);
 
@@ -1266,8 +1354,13 @@ export const calculatePrice = async (req, res) => {
       });
 
       // Split UTSF results: user's own UTSF vendors go to tiedUp, rest to company
-      const utsfTiedUp = newUtsfResults.filter(u => u.customerID && String(u.customerID) === String(customerID));
-      const utsfPublic = newUtsfResults.filter(u => !u.customerID || String(u.customerID) !== String(customerID));
+      // Set isTiedUp flag correctly so frontend categorizes them properly
+      const utsfTiedUp = newUtsfResults
+        .filter(u => u.customerID && String(u.customerID) === String(customerID))
+        .map(u => ({ ...u, isTiedUp: true }));
+      const utsfPublic = newUtsfResults
+        .filter(u => !u.customerID || String(u.customerID) !== String(customerID))
+        .map(u => ({ ...u, isTiedUp: false }));
       allTiedUpResults.push(...utsfTiedUp);
 
       // Combine all results
@@ -1285,6 +1378,31 @@ export const calculatePrice = async (req, res) => {
       // PERFORMANCE: Log total processing time
       console.log(`[PERF] calculatePrice completed in ${Date.now() - startTime}ms (MongoDB: ${transporterResult.length}, UTSF: ${newUtsfResults.length})`);
 
+      // =========================================================================
+      // SMART SHIELD: Validate all quotes for anomalies before sending to frontend
+      // Catches: NaN values, negative charges, weight mismatches, formula drift,
+      //          extreme outliers, phantom charges, and more
+      // =========================================================================
+      const allQuotesForValidation = [...allTiedUpResults, ...combinedCompanyResult];
+      const shieldResult = validateAllQuotes(allQuotesForValidation);
+
+      // Log anomalies to server console for monitoring
+      if (shieldResult.summary.errors > 0 || shieldResult.summary.warnings > 0) {
+        console.warn(`[SMART SHIELD] Route ${fromPincode}→${toPincode}: ${shieldResult.summary.errors} errors, ${shieldResult.summary.warnings} warnings across ${shieldResult.summary.totalQuotes} quotes (score: ${shieldResult.overallScore})`);
+        // Log individual errors (warnings only at debug level)
+        shieldResult.quoteResults.forEach(qr => {
+          const errors = qr.flags.filter(f => f.severity === 'error');
+          if (errors.length > 0) {
+            console.error(`  [SHIELD ERROR] ${qr.companyName}: ${errors.map(e => e.message).join('; ')}`);
+          }
+        });
+        if (shieldResult.cohortFlags.length > 0) {
+          shieldResult.cohortFlags.forEach(cf => {
+            console.warn(`  [SHIELD OUTLIER] ${cf.message}`);
+          });
+        }
+      }
+
       const responseData = {
         success: true,
         message: allTiedUpResults.length > 0 || combinedCompanyResult.length > 0
@@ -1296,6 +1414,19 @@ export const calculatePrice = async (req, res) => {
         distanceKm: distData.distanceKm || parseFloat(String(dist).replace(/[^0-9.]/g, '')) || 0,
         distanceText: dist,
         estimatedDays: estTime,
+        // Smart Shield anomaly report
+        smartShield: {
+          overallScore: shieldResult.overallScore,
+          summary: shieldResult.summary,
+          cohortFlags: shieldResult.cohortFlags,
+          // Per-quote flags mapped by companyName for easy frontend lookup
+          quoteFlags: shieldResult.quoteResults.reduce((map, qr) => {
+            if (qr.flags.length > 0) {
+              map[qr.companyName] = { flags: qr.flags, score: qr.score };
+            }
+            return map;
+          }, {}),
+        },
         // Debug info to help frontend understand why no results
         debug: {
           originZone: fromZone,
@@ -1330,11 +1461,27 @@ export const calculatePrice = async (req, res) => {
 
       return res.status(200).json(responseData);
     } catch (err) {
-      console.error("An error occurred in calculatePrice:", err);
-      console.error("Stack trace:", err.stack);
-      return res.status(500).json({
-        success: false,
-        message: "An internal server error occurred.",
+      console.error(`[${rid}] An error occurred in calculatePrice:`, err);
+      console.error(`[${rid}] Stack trace:`, err.stack);
+      console.error(`[${rid}] Request params: from=${fromPincode}, to=${toPincode}, customerID=${customerID}`);
+      // GRACEFUL DEGRADATION: Return 200 with empty results instead of 500
+      // This allows the frontend to still render the "Your Vendors" section
+      // with "Find nearest serviceable pincode" and "Add a vendor" buttons
+      return res.status(200).json({
+        success: true,
+        message: "Price calculated with errors. Some results may be missing.",
+        tiedUpResult: [],
+        companyResult: [],
+        distanceKm: 0,
+        distanceText: "N/A",
+        estimatedDays: "N/A",
+        smartShield: { overallScore: 1, summary: { totalQuotes: 0, errors: 0, warnings: 0, infos: 0, cleanQuotes: 0 }, cohortFlags: [], quoteFlags: {} },
+        debug: {
+          error: true,
+          errorType: err.name,
+          errorMessage: err.message,
+          processingTimeMs: Date.now() - startTime,
+        },
       });
     }
   } catch (outerErr) {
