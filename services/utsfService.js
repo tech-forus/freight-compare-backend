@@ -211,7 +211,7 @@ class UTSFTransporter {
   get transporterType() { return this._data.meta?.transporterType || 'regular'; }
   get rating() { return this._data.meta?.rating || 4.0; }
   get isVerified() { return this._data.meta?.isVerified || false; }
-  
+
   /**
    * Get all serviceable pincodes for this transporter
    * Returns an array of numbers
@@ -456,7 +456,7 @@ class UTSFTransporter {
     const miscCharges = pr.miscellanousCharges || pr.miscCharges || 0;
 
     // Fuel charges (percentage of baseFreight, NOT effectiveBase - line 799)
-    const fuelCharges = ((pr.fuel || 0) / 100) * baseFreight;
+    const fuelCharges = Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity);
 
     // Helper for variable/fixed charges (max of percentage * baseFreight or fixed)
     const computeCharge = (config) => {
@@ -481,13 +481,21 @@ class UTSFTransporter {
     const handlingWeight = Math.max(0, chargeableWeight - thresholdWeight);
     const handlingCharges = handlingFixed + (handlingWeight * handlingVariable / 100);
 
-    // ODA charges: fixed + weight * variable% if destination is ODA (lines 808-811)
+    // ODA charges: supports legacy, switch, and excess modes
     let odaCharges = 0;
     if (toResult.isOda) {
       const odaConfig = pr.odaCharges || {};
       const odaFixed = odaConfig.f !== undefined ? odaConfig.f : (odaConfig.fixed || 0);
       const odaVariable = odaConfig.v !== undefined ? odaConfig.v : (odaConfig.variable || 0);
-      odaCharges = odaFixed + (chargeableWeight * odaVariable / 100);
+      const odaThreshold = odaConfig.thresholdWeight || 0;
+      const odaMode = odaConfig.mode || 'legacy';
+      if (odaMode === 'switch') {
+        odaCharges = chargeableWeight <= odaThreshold ? odaFixed : odaVariable * chargeableWeight;
+      } else if (odaMode === 'excess') {
+        odaCharges = odaFixed + Math.max(0, chargeableWeight - odaThreshold) * odaVariable;
+      } else {
+        odaCharges = odaFixed + (chargeableWeight * odaVariable / 100);
+      }
     }
 
     // Invoice value charges
@@ -539,7 +547,21 @@ class UTSFTransporter {
       breakdown,
       originZone,
       destZone,
-      isOda: toResult.isOda
+      isOda: toResult.isOda,
+      formulaParams: {
+        source: 'UTSF',
+        kFactor: pr.kFactor ?? pr.divisor ?? 5000,
+        fuelPercent: pr.fuel || 0,
+        fuelMax: pr.fuelMax || null,
+        docketCharge: docketCharge,
+        rovPercent: pr.rovCharges?.variable || pr.rovCharges?.v || 0,
+        rovFixed: pr.rovCharges?.fixed || pr.rovCharges?.f || 0,
+        minCharges: minCharges,
+        odaConfig: { isOda: toResult.isOda, fixed: pr.odaCharges?.f ?? pr.odaCharges?.fixed ?? 0, variable: pr.odaCharges?.v ?? pr.odaCharges?.variable ?? 0, thresholdWeight: pr.odaCharges?.thresholdWeight || 0, mode: pr.odaCharges?.mode || 'legacy' },
+        unitPrice: unitPrice,
+        baseFreight: breakdown.baseFreight,
+        effectiveBaseFreight: breakdown.effectiveBaseFreight
+      }
     };
   }
 
@@ -698,6 +720,10 @@ class UTSFService {
           customerID: transporter.customerID,
           rating: transporter.rating,
           isVerified: transporter.isVerified,
+          vendorRatings: transporter.vendorRatings || null,
+          totalRatings: transporter._data?.meta?.totalRatings || 0,
+          approvalStatus: transporter._data?.meta?.approvalStatus || 'approved',
+          transporterType: transporter.transporterType,
           ...priceResult,
           source: 'utsf'
         });

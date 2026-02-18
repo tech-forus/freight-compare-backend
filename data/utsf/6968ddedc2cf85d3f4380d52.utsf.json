@@ -30,9 +30,9 @@
   },
   "pricing": {
     "priceRate": {
-      "minWeight": 0,
+      "minWeight": 20,
       "docketCharges": 100,
-      "fuel": 19,
+      "fuel": 0,
       "divisor": 1,
       "kFactor": 4500,
       "minCharges": 400,
@@ -41,15 +41,17 @@
       "miscCharges": 0,
       "rovCharges": {
         "v": 0,
-        "f": 50
+        "f": 0
       },
       "insuranceCharges": {
         "v": 0,
         "f": 0
       },
       "odaCharges": {
-        "v": 0,
-        "f": 600
+        "v": 3,
+        "f": 500,
+        "thresholdWeight": 200,
+        "mode": "excess"
       },
       "codCharges": {
         "v": 0,

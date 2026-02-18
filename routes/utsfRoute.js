@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import utsfService from '../services/utsfService.js';
 import UTSFModel from '../model/utsfModel.js';
+import temporaryTransporterModel from '../model/temporaryTransporterModel.js';
 import multer from 'multer';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -714,13 +715,58 @@ router.post('/rollback/:id', async (req, res) => {
 
 // ==================== NEAREST SERVICEABLE PINCODE ====================
 
+// Load pincode centroids for geographic proximity search
+let centroidMap = null; // Lazy-loaded: pincode (string) -> { lat, lng }
+function getCentroidMap() {
+  if (centroidMap) return centroidMap;
+  try {
+    const centroidPath = path.resolve(__dirname, '../data/pincode_centroids.json');
+    if (fs.existsSync(centroidPath)) {
+      const data = JSON.parse(fs.readFileSync(centroidPath, 'utf8'));
+      centroidMap = new Map();
+      data.forEach(entry => {
+        if (entry.pincode && entry.lat && entry.lng) {
+          centroidMap.set(String(entry.pincode), { lat: entry.lat, lng: entry.lng });
+        }
+      });
+      console.log(`[NEAREST] Loaded ${centroidMap.size} pincode centroids for geo-search`);
+    }
+  } catch (err) {
+    console.error('[NEAREST] Failed to load centroids:', err.message);
+    centroidMap = new Map();
+  }
+  return centroidMap;
+}
+
+// Haversine distance in km between two {lat, lng} points
+function haversineKm(a, b) {
+  if (!a || !b) return Infinity;
+  const R = 6371; // Earth radius km
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLng = (b.lng - a.lng) * Math.PI / 180;
+  const lat1 = a.lat * Math.PI / 180;
+  const lat2 = b.lat * Math.PI / 180;
+  const sinDLat = Math.sin(dLat / 2), sinDLng = Math.sin(dLng / 2);
+  const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng;
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
 /**
  * GET /api/utsf/nearest-serviceable?pincode=X&fromPincode=Y&customerId=Z
- * Finds the nearest destination pincode (±1..±500) where at least one transporter
- * can produce an actual price quote for the from→to route.
- * Uses calculatePrice() to verify pricing — not just serviceability.
+ *
+ * Smart nearest-serviceable pincode search:
+ * 1. Gets geographic coordinates of the requested pincode
+ * 2. Finds all serviceable pincodes from relevant transporters
+ * 3. Sorts by GEOGRAPHIC DISTANCE (haversine), not numerical difference
+ * 4. Verifies each candidate has valid pricing for the full route
+ * 5. Returns the closest pincode with actual transporter results
  */
-router.get('/nearest-serviceable', (req, res) => {
+router.get('/nearest-serviceable', async (req, res) => {
+  // Prevent browser from caching this dynamic endpoint (was causing 304 stale results)
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+
   try {
     const { pincode, fromPincode, customerId } = req.query;
 
@@ -731,7 +777,6 @@ router.get('/nearest-serviceable', (req, res) => {
       });
     }
 
-    // fromPincode is needed to verify pricing for the full route
     if (!fromPincode || !/^\d{6}$/.test(String(fromPincode))) {
       return res.status(400).json({
         success: false,
@@ -740,107 +785,191 @@ router.get('/nearest-serviceable', (req, res) => {
     }
 
     const basePincode = parseInt(pincode, 10);
-    const allTransporters = utsfService.getAllTransporters();
+    const fromPinStr = String(fromPincode).trim();
+    const toPinStr = String(pincode).trim();
 
-    // Filter to customer's transporters if customerId is provided
-    let transporters = allTransporters;
+    // =========================================================================
+    // STEP 1: Gather ALL serviceable pincodes from BOTH sources:
+    //   A) UTSF transporters (in-memory, fast)
+    //   B) MongoDB tied-up vendors (DB query, needed for user's own vendors)
+    // =========================================================================
+
+    const allServiceablePins = new Set();
+
+    // --- SOURCE A: UTSF Transporters ---
+    const allUtsfTransporters = utsfService.getAllTransporters();
+    let utsfTransporters = allUtsfTransporters;
     if (customerId) {
-      const customerTransporters = allTransporters.filter(
+      const customerUtsf = allUtsfTransporters.filter(
         t => t.customerID && String(t.customerID) === String(customerId)
       );
-      if (customerTransporters.length > 0) {
-        transporters = customerTransporters;
+      if (customerUtsf.length > 0) {
+        utsfTransporters = customerUtsf;
       }
     }
 
-    if (transporters.length === 0) {
-      return res.json({
-        success: false,
-        message: 'No UTSF transporters found to search',
-        nearestPincode: null
-      });
+    utsfTransporters.forEach(t => {
+      try {
+        const pins = t.getServedPincodes();
+        pins.forEach(p => allServiceablePins.add(Number(p)));
+      } catch (e) {
+        console.warn(`[NEAREST] Error getting pincodes from UTSF ${t.companyName}:`, e.message);
+      }
+    });
+
+    // --- SOURCE B: MongoDB Tied-Up Vendors (user's own vendors) ---
+    let mongoVendors = [];
+    try {
+      const matchFilter = {
+        $or: [
+          { approvalStatus: "approved" },
+          { approvalStatus: { $exists: false } }
+        ],
+        companyName: { $not: { $regex: /test|tester|dummy|vellore/i } }
+      };
+      // If customerId provided, only search this customer's vendors
+      if (customerId) {
+        matchFilter.customerID = customerId;
+      }
+
+      mongoVendors = await temporaryTransporterModel.aggregate([
+        { $match: matchFilter },
+        {
+          $project: {
+            companyName: 1,
+            customerID: 1,
+            // Only fetch pincodes from serviceability, not the full array
+            serviceability: {
+              $map: {
+                input: { $ifNull: ["$serviceability", []] },
+                as: "s",
+                in: { pincode: "$$s.pincode", active: "$$s.active" }
+              }
+            }
+          }
+        }
+      ]).option({ maxTimeMS: 15000 });
+
+      // Add all served pincodes from MongoDB vendors
+      for (const vendor of mongoVendors) {
+        if (!Array.isArray(vendor.serviceability)) continue;
+        for (const entry of vendor.serviceability) {
+          if (entry.active !== false && entry.pincode) {
+            allServiceablePins.add(Number(entry.pincode));
+          }
+        }
+      }
+
+      console.log(`[NEAREST] MongoDB vendors: ${mongoVendors.length}, UTSF transporters: ${utsfTransporters.length}`);
+    } catch (dbErr) {
+      console.warn(`[NEAREST] MongoDB query failed (continuing with UTSF only):`, dbErr.message);
     }
 
-    // Optimized Search (O(P) instead of O(N*Transporters))
-    // 1. Gather all unique serviceable pincodes from relevant transporters
-    const allServiceablePins = new Set();
-    transporters.forEach(t => {
-      const pins = t.getServedPincodes(); // Helper we just added
-      pins.forEach(p => allServiceablePins.add(p));
-    });
+    // Remove the original pincode from candidates
+    allServiceablePins.delete(basePincode);
 
     if (allServiceablePins.size === 0) {
       return res.json({
         success: false,
-        message: 'No serviceable pincodes found in relevant transporters',
+        message: 'No serviceable pincodes found in any transporters',
         nearestPincode: null
       });
     }
 
-    // 2. Convert to array and find closest candidates
-    // Filter to be within reasonable range (+/- 1000 is usually enough for "nearby", but we can go wider if needed)
-    // Actually, since we have the full list, let's just sort by difference and take top candidates.
-    const allCandidates = Array.from(allServiceablePins)
-      .map(p => ({
-        pincode: p,
-        diff: Math.abs(p - basePincode)
-      }))
-      .filter(c => c.diff > 0);
+    // =========================================================================
+    // STEP 2: Sort candidates by GEOGRAPHIC distance
+    // =========================================================================
+    const centroids = getCentroidMap();
+    const baseCoords = centroids.get(String(pincode));
 
-    // Filter preferred range (diff 2 to 4) and others
-    const preferred = allCandidates.filter(c => c.diff >= 2 && c.diff <= 4);
-    const others = allCandidates.filter(c => c.diff < 2 || c.diff > 4).sort((a, b) => a.diff - b.diff);
+    let candidates;
 
-    // Shuffle preferred to add "randomness" as requested
-    for (let i = preferred.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [preferred[i], preferred[j]] = [preferred[j], preferred[i]];
+    if (baseCoords && centroids.size > 0) {
+      candidates = Array.from(allServiceablePins)
+        .map(p => {
+          const coords = centroids.get(String(p));
+          const distKm = coords ? haversineKm(baseCoords, coords) : Infinity;
+          return { pincode: p, distKm, numDiff: Math.abs(p - basePincode) };
+        })
+        .filter(c => c.distKm < 200)
+        .sort((a, b) => a.distKm - b.distKm)
+        .slice(0, 50);
+
+      console.log(`[NEAREST] Geo-search: ${candidates.length} candidates within 200km of ${pincode}`);
+    } else {
+      console.warn(`[NEAREST] No centroids for ${pincode} — falling back to numerical difference`);
+      candidates = Array.from(allServiceablePins)
+        .map(p => ({
+          pincode: p,
+          distKm: null,
+          numDiff: Math.abs(p - basePincode)
+        }))
+        .sort((a, b) => a.numDiff - b.numDiff)
+        .slice(0, 50);
     }
 
-    const candidates = [...preferred, ...others].slice(0, 20);
+    if (candidates.length === 0) {
+      return res.json({
+        success: false,
+        message: 'No nearby serviceable pincodes found within search radius',
+        nearestPincode: null
+      });
+    }
 
-    // 3. Verify pricing for candidates in order
+    // =========================================================================
+    // STEP 3: Verify each candidate has REAL pricing via UTSF calculatePrice
+    // Only UTSF calculatePrice is reliable — it checks zone rates, serviceability,
+    // and returns actual pricing. MongoDB serviceability checks give false positives
+    // (pincode in serviceability != vendor can price the route).
+    // =========================================================================
+    let checkedCount = 0;
+
     for (const cand of candidates) {
-      const pinStr = String(cand.pincode);
       const servedBy = [];
+      checkedCount++;
 
-      for (const t of transporters) {
-        // Must verify PRICE, not just serviceability (zone-to-zone check)
-        const result = t.calculatePrice(
-          parseInt(fromPincode, 10),
-          cand.pincode,
-          100 // test weight
-        );
-
-        if (result && !result.error && result.totalCharges > 0) {
-          servedBy.push(t.companyName);
+      // Verify via UTSF calculatePrice (accurate — checks full route pricing)
+      for (const t of utsfTransporters) {
+        try {
+          const result = t.calculatePrice(
+            parseInt(fromPincode, 10),
+            cand.pincode,
+            100
+          );
+          if (result && !result.error && result.totalCharges > 0) {
+            servedBy.push(t.companyName);
+          }
+        } catch (priceErr) {
+          // Continue
         }
       }
 
       if (servedBy.length > 0) {
+        const pinStr = String(cand.pincode);
+        const distInfo = cand.distKm !== null
+          ? `${Math.round(cand.distKm)}km away`
+          : `±${cand.numDiff} numerically`;
+
+        console.log(`[NEAREST] Found serviceable pincode ${pinStr} after checking ${checkedCount} candidates`);
         return res.json({
           success: true,
           nearestPincode: pinStr,
           originalPincode: pincode,
-          distance: cand.diff,
+          distance: cand.numDiff,
+          distanceKm: cand.distKm !== null ? Math.round(cand.distKm) : null,
           servedBy,
-          message: `Found priceable pincode ${pinStr} (±${cand.diff} from ${pincode})`
+          transporterCount: servedBy.length,
+          message: `Found serviceable pincode ${pinStr} (${distInfo} from ${pincode})`
         });
       }
     }
 
+    // No candidate had valid pricing from any vendor
+    console.log(`[NEAREST] No serviceable pincode found after checking ${checkedCount} candidates`);
     return res.json({
       success: false,
-      message: 'No nearby pincodes found with valid pricing (checked closest 20)',
+      message: `No nearby pincodes found with valid pricing (checked ${checkedCount} closest pincodes)`,
       nearestPincode: null
-    });
-
-    // Nothing found within ±500
-    res.json({
-      success: false,
-      nearestPincode: null,
-      originalPincode: pincode,
-      message: 'No priceable pincode found within ±500 range'
     });
   } catch (err) {
     console.error('[UTSF API] Error finding nearest serviceable pincode:', err);

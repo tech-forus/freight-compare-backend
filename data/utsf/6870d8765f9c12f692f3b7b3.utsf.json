@@ -32,16 +32,17 @@
     "priceRate": {
       "minWeight": 20,
       "docketCharges": 350,
-      "fuel": 1,
+      "fuel": 5,
+      "fuelMax": 400,
       "divisor": 5000,
       "kFactor": 5000,
       "minCharges": 0,
       "greenTax": 0,
-      "daccCharges": 200,
-      "miscCharges": 1000,
+      "daccCharges": 0,
+      "miscCharges": 0,
       "rovCharges": {
         "v": 0,
-        "f": 0
+        "f": 100
       },
       "insuranceCharges": {
         "v": 0,
@@ -49,7 +50,7 @@
       },
       "odaCharges": {
         "v": 0,
-        "f": 0
+        "f": 500
       },
       "codCharges": {
         "v": 0,
