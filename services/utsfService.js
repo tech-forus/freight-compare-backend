@@ -509,25 +509,13 @@ class UTSFTransporter {
     const handlingWeight = Math.max(0, chargeableWeight - thresholdWeight);
     const handlingCharges = handlingFixed + (handlingWeight * handlingVariable / 100);
 
-    // ODA charges: mode-based calculation if destination is ODA (lines 808-811)
+    // ODA charges: fixed + weight * variable% if destination is ODA (lines 808-811)
     let odaCharges = 0;
     if (toResult.isOda) {
       const odaConfig = pr.odaCharges || {};
       const odaFixed = odaConfig.f !== undefined ? odaConfig.f : (odaConfig.fixed || 0);
-      const odaVar = odaConfig.v !== undefined ? odaConfig.v : (odaConfig.variable || 0);
-      const odaThreshold = odaConfig.thresholdWeight || 0;
-      const odaMode = odaConfig.mode || 'legacy';
-
-      if (odaMode === 'switch') {
-        // DB Schenker: if wt <= threshold → fixed, else rate * wt
-        odaCharges = chargeableWeight <= odaThreshold ? odaFixed : odaVar * chargeableWeight;
-      } else if (odaMode === 'excess') {
-        // Shipshopy: fixed + max(0, wt - threshold) * rate
-        odaCharges = odaFixed + Math.max(0, chargeableWeight - odaThreshold) * odaVar;
-      } else {
-        // legacy: fixed + weight * variable%
-        odaCharges = odaFixed + (chargeableWeight * odaVar / 100);
-      }
+      const odaVariable = odaConfig.v !== undefined ? odaConfig.v : (odaConfig.variable || 0);
+      odaCharges = odaFixed + (chargeableWeight * odaVariable / 100);
     }
 
     // Invoice value charges
@@ -586,7 +574,21 @@ class UTSFTransporter {
       breakdown,
       originZone,
       destZone,
-      isOda: toResult.isOda
+      isOda: toResult.isOda,
+      formulaParams: {
+        source: 'UTSF',
+        kFactor: pr.kFactor ?? pr.divisor ?? 5000,
+        fuelPercent: pr.fuel || 0,
+        fuelMax: pr.fuelMax || null,
+        docketCharge: docketCharge,
+        rovPercent: pr.rovCharges?.variable || pr.rovCharges?.v || 0,
+        rovFixed: pr.rovCharges?.fixed || pr.rovCharges?.f || 0,
+        minCharges: minCharges,
+        odaConfig: { isOda: toResult.isOda, fixed: pr.odaCharges?.f ?? pr.odaCharges?.fixed ?? 0, variable: pr.odaCharges?.v ?? pr.odaCharges?.variable ?? 0, thresholdWeight: pr.odaCharges?.thresholdWeight || 0, mode: pr.odaCharges?.mode || 'legacy' },
+        unitPrice: unitPrice,
+        baseFreight: breakdown.baseFreight,
+        effectiveBaseFreight: breakdown.effectiveBaseFreight
+      }
     };
   }
 

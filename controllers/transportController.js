@@ -706,93 +706,92 @@ export const calculatePrice = async (req, res) => {
       console.time(`[${rid}] BUILD tiedUpResult`);
       const tiedUpRaw = await Promise.all(
         tiedUpCompanies.map(async (tuc) => {
-          try {
           const companyName = tuc.companyName;
           if (!companyName) return null;
 
-          const priceChart = tuc.prices?.priceChart;
-          if (!priceChart || !Object.keys(priceChart).length) return null;
+            const priceChart = tuc.prices?.priceChart;
+            if (!priceChart || !Object.keys(priceChart).length) return null;
 
-          // use already-normalised zones
-          const originZone = fromZone;
-          const destZone = toZone;
-          if (!originZone || !destZone) return null;
+            // use already-normalised zones
+            const originZone = fromZone;
+            const destZone = toZone;
+            if (!originZone || !destZone) return null;
 
-          // ============================================================
-          // PERFORMANCE: Use pre-built Map for O(1) pincode lookup
-          // ============================================================
-          const pincodeMap = serviceabilityMaps.get(tuc._id);
+            // ============================================================
+            // PERFORMANCE: Use pre-built Map for O(1) pincode lookup
+            // ============================================================
+            const pincodeMap = serviceabilityMaps.get(tuc._id);
 
-          let effectiveOriginZone = originZone;
-          let effectiveDestZone = destZone;
-          let destIsOda = false;
+            let effectiveOriginZone = originZone;
+            let effectiveDestZone = destZone;
+            let destIsOda = false;
 
-          if (pincodeMap) {
-            // O(1) Map lookup instead of O(n) find()
-            const originEntry = pincodeMap.get(fromPinStr);
-            const destEntry = pincodeMap.get(toPinStr);
+            if (pincodeMap) {
+              // O(1) Map lookup instead of O(n) find()
+              const originEntry = pincodeMap.get(fromPinStr);
+              const destEntry = pincodeMap.get(toPinStr);
 
-            // Check if both pincodes are serviceable
-            if (!originEntry || !destEntry) {
+              // Check if both pincodes are serviceable
+              if (!originEntry || !destEntry) {
+                return null;
+              }
+
+              // Use the zones from serviceability
+              effectiveOriginZone = originEntry.zone?.toUpperCase() || originZone;
+              effectiveDestZone = destEntry.zone?.toUpperCase() || destZone;
+              destIsOda = destEntry.isODA === true;
+            } else {
+              // ============================================================
+              // LEGACY FALLBACK DISABLED (2026-01-30)
+              // Reason: All real vendors use explicit serviceability arrays.
+              //          Zone-only fallback was only used by test accounts.
+              // To revert: Uncomment the block below and remove "return null"
+              // ============================================================
+              return null; // No serviceability = no coverage
+            }
+
+            // Get unit price using effective zones (from serviceability or fallback)
+            let unitPrice = getUnitPriceFromPriceChart(
+              priceChart,
+              effectiveOriginZone,
+              effectiveDestZone
+            );
+            if (unitPrice == null) {
+              // No price for this route - skip silently for performance
               return null;
             }
 
-            // Use the zones from serviceability
-            effectiveOriginZone = originEntry.zone?.toUpperCase() || originZone;
-            effectiveDestZone = destEntry.zone?.toUpperCase() || destZone;
-            destIsOda = destEntry.isODA === true;
-          } else {
-            // ============================================================
-            // LEGACY FALLBACK DISABLED (2026-01-30)
-            // Reason: All real vendors use explicit serviceability arrays.
-            //          Zone-only fallback was only used by test accounts.
-            // To revert: Uncomment the block below and remove "return null"
-            // ============================================================
-            return null; // No serviceability = no coverage
-          }
+            const pr = tuc.prices.priceRate || {};
 
-          // Get unit price using effective zones (from serviceability or fallback)
-          let unitPrice = getUnitPriceFromPriceChart(
-            priceChart,
-            effectiveOriginZone,
-            effectiveDestZone
-          );
-          if (unitPrice == null) {
-            // No price for this route - skip silently for performance
-            return null;
-          }
+            // 🔍 DEBUG: Log vendor pricing data for any vendor with "jan" in name (case insensitive)
+            // PERFORMANCE: Only log when ENABLE_VENDOR_DEBUG_LOGGING is true (disabled in production)
+            if (ENABLE_VENDOR_DEBUG_LOGGING && tuc.companyName && tuc.companyName.toLowerCase().includes('jan')) {
+              console.log('🔍 [DEBUG ADD JAN] =====================================');
+              console.log(`🔍 [DEBUG] Vendor: "${tuc.companyName}" (_id: ${tuc._id})`);
+              console.log(`🔍 [DEBUG] Route: ${effectiveOriginZone} → ${effectiveDestZone}`);
+              console.log(`🔍 [DEBUG] unitPrice from priceChart: ₹${unitPrice}/kg`);
+              console.log(`🔍 [DEBUG] priceChart content:`, JSON.stringify(tuc.prices?.priceChart));
+              console.log(`🔍 [DEBUG] priceRate.docketCharges: ₹${pr.docketCharges}`);
+              console.log(`🔍 [DEBUG] priceRate.fuel: ${pr.fuel}%`);
+              console.log(`🔍 [DEBUG] priceRate.greenTax: ₹${pr.greenTax}`);
+              console.log(`🔍 [DEBUG] priceRate.daccCharges: ₹${pr.daccCharges}`);
+              console.log(`🔍 [DEBUG] priceRate.miscellanousCharges: ₹${pr.miscellanousCharges}`);
+              console.log(`🔍 [DEBUG] priceRate.minCharges: ₹${pr.minCharges}`);
+              console.log(`🔍 [DEBUG] priceRate.rovCharges:`, pr.rovCharges);
+              console.log(`🔍 [DEBUG] priceRate.handlingCharges:`, pr.handlingCharges);
+              console.log(`🔍 [DEBUG] priceRate.appointmentCharges:`, pr.appointmentCharges);
+              console.log(`🔍 [DEBUG] priceRate.divisor/kFactor: ${pr.divisor ?? pr.kFactor ?? 'default 5000'}`);
+              console.log('🔍 [DEBUG ADD JAN] =====================================');
+            }
+            const kFactor = pr.kFactor ?? pr.divisor ?? 5000;
 
-          const pr = tuc.prices.priceRate || {};
-
-          // 🔍 DEBUG: Log vendor pricing data for any vendor with "jan" in name (case insensitive)
-          // PERFORMANCE: Only log when ENABLE_VENDOR_DEBUG_LOGGING is true (disabled in production)
-          if (ENABLE_VENDOR_DEBUG_LOGGING && tuc.companyName && tuc.companyName.toLowerCase().includes('jan')) {
-            console.log('🔍 [DEBUG ADD JAN] =====================================');
-            console.log(`🔍 [DEBUG] Vendor: "${tuc.companyName}" (_id: ${tuc._id})`);
-            console.log(`🔍 [DEBUG] Route: ${effectiveOriginZone} → ${effectiveDestZone}`);
-            console.log(`🔍 [DEBUG] unitPrice from priceChart: ₹${unitPrice}/kg`);
-            console.log(`🔍 [DEBUG] priceChart content:`, JSON.stringify(tuc.prices?.priceChart));
-            console.log(`🔍 [DEBUG] priceRate.docketCharges: ₹${pr.docketCharges}`);
-            console.log(`🔍 [DEBUG] priceRate.fuel: ${pr.fuel}%`);
-            console.log(`🔍 [DEBUG] priceRate.greenTax: ₹${pr.greenTax}`);
-            console.log(`🔍 [DEBUG] priceRate.daccCharges: ₹${pr.daccCharges}`);
-            console.log(`🔍 [DEBUG] priceRate.miscellanousCharges: ₹${pr.miscellanousCharges}`);
-            console.log(`🔍 [DEBUG] priceRate.minCharges: ₹${pr.minCharges}`);
-            console.log(`🔍 [DEBUG] priceRate.rovCharges:`, pr.rovCharges);
-            console.log(`🔍 [DEBUG] priceRate.handlingCharges:`, pr.handlingCharges);
-            console.log(`🔍 [DEBUG] priceRate.appointmentCharges:`, pr.appointmentCharges);
-            console.log(`🔍 [DEBUG] priceRate.divisor/kFactor: ${pr.divisor ?? pr.kFactor ?? 'default 5000'}`);
-            console.log('🔍 [DEBUG ADD JAN] =====================================');
-          }
-          const kFactor = pr.kFactor ?? pr.divisor ?? 5000;
-
-          // PERFORMANCE: Use pre-calculated volumetric weight instead of recalculating
-          const volumetricWeight = getVolumetricWeight(
-            kFactor,
-            preCalcVolumetricWeights,
-            shipment_details,
-            { length, width, height, noofboxes }
-          );
+            // PERFORMANCE: Use pre-calculated volumetric weight instead of recalculating
+            const volumetricWeight = getVolumetricWeight(
+              kFactor,
+              preCalcVolumetricWeights,
+              shipment_details,
+              { length, width, height, noofboxes }
+            );
 
           const chargeableWeight = Math.max(volumetricWeight, actualWeight);
           const baseFreight = unitPrice * chargeableWeight;
@@ -801,7 +800,7 @@ export const calculatePrice = async (req, res) => {
           const greenTax = pr.greenTax || 0;
           const daccCharges = pr.daccCharges || 0;
           const miscCharges = pr.miscellanousCharges || 0;
-          const fuelCharges = Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity);
+          const fuelCharges = ((pr.fuel || 0) / 100) * baseFreight;
           const rovCharges = Math.max(
             ((pr.rovCharges?.variable || 0) / 100) * baseFreight,
             pr.rovCharges?.fixed || 0
@@ -810,20 +809,10 @@ export const calculatePrice = async (req, res) => {
             ((pr.insuaranceCharges?.variable || 0) / 100) * baseFreight,
             pr.insuaranceCharges?.fixed || 0
           );
-          let odaCharges = 0;
-          if (destIsOda) {
-            const odaFixed = pr.odaCharges?.fixed || pr.odaCharges?.f || 0;
-            const odaVar = pr.odaCharges?.variable || pr.odaCharges?.v || 0;
-            const odaThreshold = pr.odaCharges?.thresholdWeight || 0;
-            const odaMode = pr.odaCharges?.mode || 'legacy';
-            if (odaMode === 'switch') {
-              odaCharges = chargeableWeight <= odaThreshold ? odaFixed : odaVar * chargeableWeight;
-            } else if (odaMode === 'excess') {
-              odaCharges = odaFixed + Math.max(0, chargeableWeight - odaThreshold) * odaVar;
-            } else {
-              odaCharges = odaFixed + (chargeableWeight * odaVar / 100);
-            }
-          }
+          const odaCharges = destIsOda
+            ? (pr.odaCharges?.fixed || 0) +
+            chargeableWeight * ((pr.odaCharges?.variable || 0) / 100)
+            : 0;
           const handlingCharges =
             (pr.handlingCharges?.fixed || 0) +
             chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100);
@@ -836,111 +825,124 @@ export const calculatePrice = async (req, res) => {
             pr.appointmentCharges?.fixed || 0
           );
 
-          // FIX: minCharges is a FLOOR constraint, not an additive fee
-          // effectiveBaseFreight ensures freight is never below minimum
-          const effectiveBaseFreight = Math.max(baseFreight, minCharges);
+            // FIX: minCharges is a FLOOR constraint, not an additive fee
+            // effectiveBaseFreight ensures freight is never below minimum
+            const effectiveBaseFreight = Math.max(baseFreight, minCharges);
 
-          const totalChargesBeforeAddon =
-            effectiveBaseFreight +
-            docketCharge +
-            greenTax +
-            daccCharges +
-            miscCharges +
-            fuelCharges +
-            rovCharges +
-            insuaranceCharges +
-            odaCharges +
-            handlingCharges +
-            fmCharges +
-            appointmentCharges;
+            const totalChargesBeforeAddon =
+              effectiveBaseFreight +
+              docketCharge +
+              greenTax +
+              daccCharges +
+              miscCharges +
+              fuelCharges +
+              rovCharges +
+              insuaranceCharges +
+              odaCharges +
+              handlingCharges +
+              fmCharges +
+              appointmentCharges;
 
-          // 🔍 DEBUG: Log CALCULATED values for "Add Jan"
-          // PERFORMANCE: Only log when ENABLE_VENDOR_DEBUG_LOGGING is true (disabled in production)
-          if (ENABLE_VENDOR_DEBUG_LOGGING && tuc.companyName && tuc.companyName.toLowerCase().includes('jan')) {
-            console.log('🧮 [DEBUG CALC] =====================================');
-            console.log(`🧮 [DEBUG] actualWeight: ${actualWeight} kg`);
-            console.log(`🧮 [DEBUG] volumetricWeight: ${volumetricWeight} kg`);
-            console.log(`🧮 [DEBUG] chargeableWeight: ${chargeableWeight} kg`);
-            console.log(`🧮 [DEBUG] baseFreight: ₹${baseFreight} (${unitPrice} × ${chargeableWeight})`);
-            console.log(`🧮 [DEBUG] effectiveBaseFreight: ₹${effectiveBaseFreight}`);
-            console.log(`🧮 [DEBUG] fuelCharges: ₹${fuelCharges.toFixed(2)}`);
-            console.log(`🧮 [DEBUG] docketCharge: ₹${docketCharge}`);
-            console.log(`🧮 [DEBUG] rovCharges: ₹${rovCharges}`);
-            console.log(`🧮 [DEBUG] handlingCharges: ₹${handlingCharges}`);
-            console.log(`🧮 [DEBUG] appointmentCharges: ₹${appointmentCharges}`);
-            console.log(`🧮 [DEBUG] totalChargesBeforeAddon: ₹${totalChargesBeforeAddon.toFixed(2)}`);
-            console.log('🧮 [DEBUG CALC] =====================================');
-          }
+            // 🔍 DEBUG: Log CALCULATED values for "Add Jan"
+            // PERFORMANCE: Only log when ENABLE_VENDOR_DEBUG_LOGGING is true (disabled in production)
+            if (ENABLE_VENDOR_DEBUG_LOGGING && tuc.companyName && tuc.companyName.toLowerCase().includes('jan')) {
+              console.log('🧮 [DEBUG CALC] =====================================');
+              console.log(`🧮 [DEBUG] actualWeight: ${actualWeight} kg`);
+              console.log(`🧮 [DEBUG] volumetricWeight: ${volumetricWeight} kg`);
+              console.log(`🧮 [DEBUG] chargeableWeight: ${chargeableWeight} kg`);
+              console.log(`🧮 [DEBUG] baseFreight: ₹${baseFreight} (${unitPrice} × ${chargeableWeight})`);
+              console.log(`🧮 [DEBUG] effectiveBaseFreight: ₹${effectiveBaseFreight}`);
+              console.log(`🧮 [DEBUG] fuelCharges: ₹${fuelCharges.toFixed(2)}`);
+              console.log(`🧮 [DEBUG] docketCharge: ₹${docketCharge}`);
+              console.log(`🧮 [DEBUG] rovCharges: ₹${rovCharges}`);
+              console.log(`🧮 [DEBUG] handlingCharges: ₹${handlingCharges}`);
+              console.log(`🧮 [DEBUG] appointmentCharges: ₹${appointmentCharges}`);
+              console.log(`🧮 [DEBUG] totalChargesBeforeAddon: ₹${totalChargesBeforeAddon.toFixed(2)}`);
+              console.log('🧮 [DEBUG CALC] =====================================');
+            }
 
-          l1 = Math.min(l1, totalChargesBeforeAddon);
+            l1 = Math.min(l1, totalChargesBeforeAddon);
 
-          // --- NEW: invoice addon detection points (try multiple common paths)
-          const possibleRule =
-            tuc.invoice_rule ||
-            tuc.invoiceRule ||
-            (tuc.prices &&
-              (tuc.prices.invoice_rule || tuc.prices.invoiceRule)) ||
-            null;
+            // --- NEW: invoice addon detection points (try multiple common paths)
+            const possibleRule =
+              tuc.invoice_rule ||
+              tuc.invoiceRule ||
+              (tuc.prices &&
+                (tuc.prices.invoice_rule || tuc.prices.invoiceRule)) ||
+              null;
 
-          // ✅ Use our simple invoiceValueCharges field from schema
-          const invoiceAddon = calculateInvoiceValueCharge(
-            invoiceValue,
-            tuc.invoiceValueCharges
-          );
+            // ✅ Use our simple invoiceValueCharges field from schema
+            const invoiceAddon = calculateInvoiceValueCharge(
+              invoiceValue,
+              tuc.invoiceValueCharges
+            );
 
-          // PERF: Removed verbose invoiceRule logging
+            // PERF: Removed verbose invoiceRule logging
 
-          return {
-            companyId: tuc._id,
-            companyName: companyName,
-            originPincode: fromPincode,
-            destinationPincode: toPincode,
-            estimatedTime: estTime,
-            distance: dist,
-            actualWeight: parseFloat(actualWeight.toFixed(2)),
-            volumetricWeight: parseFloat(volumetricWeight.toFixed(2)),
-            chargeableWeight: parseFloat(chargeableWeight.toFixed(2)),
-            unitPrice,
-            baseFreight,
-            docketCharge,
-            minCharges,
-            greenTax,
-            daccCharges,
-            miscCharges,
-            fuelCharges,
-            rovCharges,
-            insuaranceCharges,
-            odaCharges,
-            handlingCharges,
-            fmCharges,
-            appointmentCharges,
+            return {
+              companyId: tuc._id,
+              companyName: companyName,
+              originPincode: fromPincode,
+              destinationPincode: toPincode,
+              estimatedTime: estTime,
+              distance: dist,
+              actualWeight: parseFloat(actualWeight.toFixed(2)),
+              volumetricWeight: parseFloat(volumetricWeight.toFixed(2)),
+              chargeableWeight: parseFloat(chargeableWeight.toFixed(2)),
+              unitPrice,
+              baseFreight,
+              docketCharge,
+              minCharges,
+              greenTax,
+              daccCharges,
+              miscCharges,
+              fuelCharges,
+              formulaParams: {
+                source: 'MongoDB',
+                kFactor: kFactor,
+                fuelPercent: pr.fuel || 0,
+                docketCharge: docketCharge,
+                rovPercent: pr.rovCharges?.variable || 0,
+                rovFixed: pr.rovCharges?.fixed || 0,
+                minCharges: minCharges,
+                odaConfig: { isOda: destIsOda, fixed: pr.odaCharges?.fixed || 0, variable: pr.odaCharges?.variable || 0 },
+                unitPrice: unitPrice,
+                baseFreight: baseFreight,
+                effectiveBaseFreight: effectiveBaseFreight
+              },
+              rovCharges,
+              insuaranceCharges,
+              odaCharges,
+              handlingCharges,
+              fmCharges,
+              appointmentCharges,
 
-            // 🔥 NEW FIELDS (needed for UI)
-            invoiceValue,                                       // What user entered
-            invoiceAddon: Math.round(invoiceAddon),     // Calculated surcharge
-            invoiceValueCharge: Math.round(invoiceAddon),
+              // 🔥 NEW FIELDS (needed for UI)
+              invoiceValue,                                       // What user entered
+              invoiceAddon: Math.round(invoiceAddon),     // Calculated surcharge
+              invoiceValueCharge: Math.round(invoiceAddon),
 
-            totalCharges: Math.round(totalChargesBeforeAddon + invoiceAddon),
-            totalChargesWithoutInvoiceAddon: Math.round(totalChargesBeforeAddon),
+              totalCharges: Math.round(totalChargesBeforeAddon + invoiceAddon),
+              totalChargesWithoutInvoiceAddon: Math.round(totalChargesBeforeAddon),
 
-            isHidden: false,
-            isTemporaryTransporter: true,
-            // Flag to distinguish user's own vendors from others
-            isTiedUp: tuc.customerID && tuc.customerID.toString() === customerID.toString(),
-            // Zone configuration for Service Zones modal
-            selectedZones: tuc.selectedZones || [],
-            zoneConfig: tuc.zoneConfig || {},
-            priceChart: tuc.prices?.priceChart || {},
-            // Approval status for UI display
-            approvalStatus: tuc.approvalStatus || 'approved', // Default to approved for legacy vendors
-            // Verification status for badge display
-            isVerified: tuc.isVerified || false,
-            // Vendor rating from database (user-configurable rating)
-            rating: tuc.rating ?? 4, // Use nullish coalescing to preserve 0 ratings
-            // Detailed vendor ratings breakdown
-            vendorRatings: tuc.vendorRatings || null,
-            totalRatings: tuc.totalRatings || 0,
-          };
+              isHidden: false,
+              isTemporaryTransporter: true,
+              // Flag to distinguish user's own vendors from others
+              isTiedUp: tuc.customerID && tuc.customerID.toString() === customerID.toString(),
+              // Zone configuration for Service Zones modal
+              selectedZones: tuc.selectedZones || [],
+              zoneConfig: tuc.zoneConfig || {},
+              priceChart: tuc.prices?.priceChart || {},
+              // Approval status for UI display
+              approvalStatus: tuc.approvalStatus || 'approved', // Default to approved for legacy vendors
+              // Verification status for badge display
+              isVerified: tuc.isVerified || false,
+              // Vendor rating from database (user-configurable rating)
+              rating: tuc.rating ?? 4, // Use nullish coalescing to preserve 0 ratings
+              // Detailed vendor ratings breakdown
+              vendorRatings: tuc.vendorRatings || null,
+              totalRatings: tuc.totalRatings || 0,
+            };
 
           } catch (error) {
             console.error(`  [ERROR] Failed processing tied-up vendor ${tuc.companyName || tuc._id}:`, error.message);
@@ -1154,7 +1156,22 @@ export const calculatePrice = async (req, res) => {
               greenTax,
               daccCharges,
               miscCharges,
+              miscCharges,
               fuelCharges,
+              formulaParams: {
+                source: 'MongoDB',
+                kFactor: kFactor,
+                fuelPercent: pr.fuel || 0,
+                docketCharge: docketCharge,
+                rovPercent: pr.rovCharges?.variable || 0,
+                rovFixed: pr.rovCharges?.fixed || 0,
+                minCharges: minCharges,
+                odaConfig: { isOda: isDestOda, fixed: pr.odaCharges?.fixed || 0, variable: pr.odaCharges?.variable || 0 },
+                unitPrice: unitPrice,
+                baseFreight: baseFreight,
+                effectiveBaseFreight: effectiveBaseFreight
+              },
+              rovCharges,
               rovCharges,
               insuaranceCharges,
               odaCharges,
@@ -1219,83 +1236,38 @@ export const calculatePrice = async (req, res) => {
           invoiceValue
         );
 
-        // Transform UTSF results to match MongoDB result format exactly
-        // Frontend VendorResultCard expects all charge fields at TOP LEVEL (not nested)
-        utsfResults = utsfResults.map(utsf => {
-          const bd = utsf.breakdown || {};
-          // Invoice value charges from UTSF (already included in totalCharges if present)
-          const invoiceAddon = bd.invoiceValueCharges || 0;
-          const totalBeforeInvoice = utsf.totalCharges - invoiceAddon;
-
-          return {
-            // Identity fields (frontend uses companyId for navigation)
-            _id: utsf.transporterId,
-            companyId: utsf.transporterId,
-            companyName: utsf.companyName,
-            customerID: utsf.customerID,
-
-            // Route info
-            originPincode: fromPincode,
-            destinationPincode: toPincode,
-            estimatedTime: estTime,
-            distance: dist,
-
-            // Weight breakdown
-            actualWeight: parseFloat(actualWeight.toFixed(2)),
-            volumetricWeight: parseFloat(defaultVolWeight.toFixed(2)),
-            chargeableWeight: parseFloat(chargeableWeight.toFixed(2)),
-
-            // Pricing — ALL at top level (matches MongoDB result format)
-            unitPrice: utsf.unitPrice || 0,
-            baseFreight: bd.baseFreight || 0,
-            effectiveBaseFreight: bd.effectiveBaseFreight || 0,
-            docketCharge: bd.docketCharge || 0,
-            minCharges: bd.effectiveBaseFreight > bd.baseFreight
-              ? bd.effectiveBaseFreight : 0,
-            greenTax: bd.greenTax || 0,
-            daccCharges: bd.daccCharges || 0,
-            miscCharges: bd.miscCharges || 0,
-            fuelCharges: bd.fuelCharges || 0,
-            rovCharges: bd.rovCharges || 0,
-            insuaranceCharges: bd.insuaranceCharges || 0,
-            odaCharges: bd.odaCharges || 0,
-            handlingCharges: bd.handlingCharges || 0,
-            fmCharges: bd.fmCharges || 0,
-            appointmentCharges: bd.appointmentCharges || 0,
-
-            // Invoice charges
-            invoiceValue: invoiceValue,
-            invoiceAddon: Math.round(invoiceAddon),
-            invoiceValueCharge: Math.round(invoiceAddon),
-
-            // Totals
-            totalCharges: Math.round(utsf.totalCharges),
-            totalChargesWithoutInvoiceAddon: Math.round(totalBeforeInvoice),
-
-            // Also keep breakdown for detailed views
-            breakdown: bd,
-
-            // Vendor metadata
-            isOda: utsf.isOda || false,
-            isHidden: false,
-            isTemporaryTransporter: true, // UTSF vendors behave like tied-up vendors
-            isTiedUp: false, // Will be overridden below based on customerID match
-            source: 'utsf',
-            zone: `${utsf.originZone} → ${utsf.destZone}`,
-
-            // Approval & verification
-            approvalStatus: utsf.approvalStatus || 'approved',
-            isVerified: utsf.isVerified || false,
-            rating: utsf.rating || 4.0,
-            vendorRatings: utsf.vendorRatings || null,
-            totalRatings: utsf.totalRatings || 0,
-
-            // Zone config (empty for UTSF — they use file-based config)
-            selectedZones: [],
-            zoneConfig: {},
-            priceChart: {},
-          };
-        });
+        // Transform UTSF results to match MongoDB result format
+        utsfResults = utsfResults.map(utsf => ({
+          _id: utsf.transporterId,
+          companyName: utsf.companyName,
+          customerID: utsf.customerID,
+          totalCharges: utsf.totalCharges,
+          est_time: estTime, // Use same estimated time
+          distance: dist, // Use same distance
+          zone: `${utsf.originZone} → ${utsf.destZone}`,
+          rating: utsf.rating || 4.0,
+          isVerified: utsf.isVerified || false,
+          source: 'utsf', // Mark as UTSF source
+          breakdown: {
+            baseFreight: utsf.breakdown.baseFreight,
+            effectiveBaseFreight: utsf.breakdown.effectiveBaseFreight,
+            docketCharge: utsf.breakdown.docketCharge,
+            greenTax: utsf.breakdown.greenTax,
+            daccCharges: utsf.breakdown.daccCharges,
+            miscCharges: utsf.breakdown.miscCharges,
+            fuelCharges: utsf.breakdown.fuelCharges,
+            rovCharges: utsf.breakdown.rovCharges,
+            insuaranceCharges: utsf.breakdown.insuaranceCharges,
+            odaCharges: utsf.breakdown.odaCharges,
+            handlingCharges: utsf.breakdown.handlingCharges,
+            fmCharges: utsf.breakdown.fmCharges,
+            appointmentCharges: utsf.breakdown.appointmentCharges
+          },
+          isOda: utsf.isOda || false,
+          chargeableWeight: chargeableWeight,
+          actualWeight: actualWeight,
+          volumetricWeight: defaultVolWeight
+        }));
 
         console.timeEnd(`[${rid}] UTSF_CALC`);
         console.log(`[UTSF] Found ${utsfResults.length} UTSF transporters for route`);

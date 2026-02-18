@@ -31,6 +31,10 @@ const pricesSchema = new mongoose.Schema(
         required: true,
         default: 0,
       },
+      fuelMax: {
+        type: Number,
+        default: 0,
+      },
       rovCharges: {
         variable: {
           type: Number,
@@ -65,6 +69,15 @@ const pricesSchema = new mongoose.Schema(
           type: Number,
           required: true,
           default: 0,
+        },
+        thresholdWeight: {
+          type: Number,
+          default: 0,
+        },
+        mode: {
+          type: String,
+          enum: ['legacy', 'switch', 'excess'],
+          default: 'legacy',
         },
       },
       codCharges: {

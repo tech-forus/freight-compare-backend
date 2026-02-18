@@ -31,7 +31,9 @@
   "pricing": {
     "priceRate": {
       "minWeight": 20,
+      "minWeight": 20,
       "docketCharges": 100,
+      "fuel": 0,
       "fuel": 0,
       "divisor": 1,
       "kFactor": 4500,
@@ -41,6 +43,7 @@
       "miscCharges": 0,
       "rovCharges": {
         "v": 0,
+        "f": 0
         "f": 0
       },
       "insuranceCharges": {
