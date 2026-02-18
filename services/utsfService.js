@@ -509,13 +509,25 @@ class UTSFTransporter {
     const handlingWeight = Math.max(0, chargeableWeight - thresholdWeight);
     const handlingCharges = handlingFixed + (handlingWeight * handlingVariable / 100);
 
-    // ODA charges: fixed + weight * variable% if destination is ODA (lines 808-811)
+    // ODA charges — three modes:
+    //   legacy:  f + w * v/100         (v is a percentage)
+    //   excess:  f + max(0,w-thresh)*v  (v is per-kg, on weight above threshold)
+    //   switch:  w > thresh ? v*w : f   (v is per-kg, applied to ALL weight)
     let odaCharges = 0;
     if (toResult.isOda) {
       const odaConfig = pr.odaCharges || {};
-      const odaFixed = odaConfig.f !== undefined ? odaConfig.f : (odaConfig.fixed || 0);
+      const odaFixed    = odaConfig.f !== undefined ? odaConfig.f : (odaConfig.fixed    || 0);
       const odaVariable = odaConfig.v !== undefined ? odaConfig.v : (odaConfig.variable || 0);
-      odaCharges = odaFixed + (chargeableWeight * odaVariable / 100);
+      const odaMode     = odaConfig.mode || 'legacy';
+      const odaThreshold = odaConfig.thresholdWeight || 0;
+      if (odaMode === 'switch') {
+        odaCharges = chargeableWeight > odaThreshold ? odaVariable * chargeableWeight : odaFixed;
+      } else if (odaMode === 'excess') {
+        odaCharges = odaFixed + Math.max(0, chargeableWeight - odaThreshold) * odaVariable;
+      } else {
+        // legacy: fixed + weight * variable%
+        odaCharges = odaFixed + (chargeableWeight * odaVariable / 100);
+      }
     }
 
     // Invoice value charges
@@ -583,7 +595,7 @@ class UTSFTransporter {
         docketCharge: docketCharge,
         rovPercent: pr.rovCharges?.variable || pr.rovCharges?.v || 0,
         rovFixed: pr.rovCharges?.fixed || pr.rovCharges?.f || 0,
-        minCharges: minCharges,
+        minCharges: minBaseFreight,
         odaConfig: { isOda: toResult.isOda, fixed: pr.odaCharges?.f ?? pr.odaCharges?.fixed ?? 0, variable: pr.odaCharges?.v ?? pr.odaCharges?.variable ?? 0, thresholdWeight: pr.odaCharges?.thresholdWeight || 0, mode: pr.odaCharges?.mode || 'legacy' },
         unitPrice: unitPrice,
         baseFreight: breakdown.baseFreight,
