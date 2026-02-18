@@ -706,6 +706,7 @@ export const calculatePrice = async (req, res) => {
       console.time(`[${rid}] BUILD tiedUpResult`);
       const tiedUpRaw = await Promise.all(
         tiedUpCompanies.map(async (tuc) => {
+          try {
           const companyName = tuc.companyName;
           if (!companyName) return null;
 
