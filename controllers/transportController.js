@@ -707,8 +707,8 @@ export const calculatePrice = async (req, res) => {
       const tiedUpRaw = await Promise.all(
         tiedUpCompanies.map(async (tuc) => {
           try {
-          const companyName = tuc.companyName;
-          if (!companyName) return null;
+            const companyName = tuc.companyName;
+            if (!companyName) return null;
 
             const priceChart = tuc.prices?.priceChart;
             if (!priceChart || !Object.keys(priceChart).length) return null;
@@ -746,9 +746,16 @@ export const calculatePrice = async (req, res) => {
               // LEGACY FALLBACK DISABLED (2026-01-30)
               // Reason: All real vendors use explicit serviceability arrays.
               //          Zone-only fallback was only used by test accounts.
-              // To revert: Uncomment the block below and remove "return null"
+              // EXCEPTION: FALLBACK_VENDORS (Wheelsyee, Local FTL) are
+              //            zone-only FTL providers — let them through.
               // ============================================================
-              return null; // No serviceability = no coverage
+              const nameLower = (companyName || '').toLowerCase();
+              const isFallbackVendor = ['wheelseye', 'local ftl', 'ftl transporter', 'local-ftl']
+                .some(fv => nameLower.includes(fv));
+              if (!isFallbackVendor) {
+                return null; // No serviceability = no coverage (except fallback vendors)
+              }
+              // Fallback vendor: use master zone-only matching (no serviceability check)
             }
 
             // Get unit price using effective zones (from serviceability or fallback)
@@ -794,37 +801,37 @@ export const calculatePrice = async (req, res) => {
               { length, width, height, noofboxes }
             );
 
-          const chargeableWeight = Math.max(volumetricWeight, actualWeight);
-          const baseFreight = unitPrice * chargeableWeight;
-          const docketCharge = pr.docketCharges || 0;
-          const minCharges = pr.minCharges || 0;
-          const greenTax = pr.greenTax || 0;
-          const daccCharges = pr.daccCharges || 0;
-          const miscCharges = pr.miscellanousCharges || 0;
-          const fuelCharges = ((pr.fuel || 0) / 100) * baseFreight;
-          const rovCharges = Math.max(
-            ((pr.rovCharges?.variable || 0) / 100) * baseFreight,
-            pr.rovCharges?.fixed || 0
-          );
-          const insuaranceCharges = Math.max(
-            ((pr.insuaranceCharges?.variable || 0) / 100) * baseFreight,
-            pr.insuaranceCharges?.fixed || 0
-          );
-          const odaCharges = destIsOda
-            ? (pr.odaCharges?.fixed || 0) +
-            chargeableWeight * ((pr.odaCharges?.variable || 0) / 100)
-            : 0;
-          const handlingCharges =
-            (pr.handlingCharges?.fixed || 0) +
-            chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100);
-          const fmCharges = Math.max(
-            ((pr.fmCharges?.variable || 0) / 100) * baseFreight,
-            pr.fmCharges?.fixed || 0
-          );
-          const appointmentCharges = Math.max(
-            ((pr.appointmentCharges?.variable || 0) / 100) * baseFreight,
-            pr.appointmentCharges?.fixed || 0
-          );
+            const chargeableWeight = Math.max(volumetricWeight, actualWeight);
+            const baseFreight = unitPrice * chargeableWeight;
+            const docketCharge = pr.docketCharges || 0;
+            const minCharges = pr.minCharges || 0;
+            const greenTax = pr.greenTax || 0;
+            const daccCharges = pr.daccCharges || 0;
+            const miscCharges = pr.miscellanousCharges || 0;
+            const fuelCharges = ((pr.fuel || 0) / 100) * baseFreight;
+            const rovCharges = Math.max(
+              ((pr.rovCharges?.variable || 0) / 100) * baseFreight,
+              pr.rovCharges?.fixed || 0
+            );
+            const insuaranceCharges = Math.max(
+              ((pr.insuaranceCharges?.variable || 0) / 100) * baseFreight,
+              pr.insuaranceCharges?.fixed || 0
+            );
+            const odaCharges = destIsOda
+              ? (pr.odaCharges?.fixed || 0) +
+              chargeableWeight * ((pr.odaCharges?.variable || 0) / 100)
+              : 0;
+            const handlingCharges =
+              (pr.handlingCharges?.fixed || 0) +
+              chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100);
+            const fmCharges = Math.max(
+              ((pr.fmCharges?.variable || 0) / 100) * baseFreight,
+              pr.fmCharges?.fixed || 0
+            );
+            const appointmentCharges = Math.max(
+              ((pr.appointmentCharges?.variable || 0) / 100) * baseFreight,
+              pr.appointmentCharges?.fixed || 0
+            );
 
             // FIX: minCharges is a FLOOR constraint, not an additive fee
             // effectiveBaseFreight ensures freight is never below minimum

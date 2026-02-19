@@ -153,8 +153,18 @@ class UTSFTransporter {
       let candidates = new Set();
 
       if (mode === ZoneCoverageMode.FULL_ZONE || isFullMinusMode(mode)) {
-        // All pincodes in zone are candidates
-        candidates = zoneToPincodes[zone] || new Set();
+        // Check if vendor also provides an explicit served whitelist
+        const servedRanges = coverage.servedRanges || coverage.served_ranges || [];
+        const servedSingles = coverage.servedSingles || coverage.served_singles || [];
+
+        if (servedSingles.length > 0 || servedRanges.length > 0) {
+          // HYBRID: vendor provides a served whitelist alongside FULL_ZONE/FULL_MINUS_EXCEPT
+          // Use ONLY the whitelist as candidates (not the entire zone from master)
+          candidates = expandPincodeRanges(servedRanges, servedSingles);
+        } else {
+          // TRUE FULL_ZONE with no whitelist: all zone pincodes from master
+          candidates = zoneToPincodes[zone] || new Set();
+        }
       }
       else if (mode === ZoneCoverageMode.ONLY_SERVED) {
         // Robust access: Try camelCase, then snake_case
@@ -516,9 +526,9 @@ class UTSFTransporter {
     let odaCharges = 0;
     if (toResult.isOda) {
       const odaConfig = pr.odaCharges || {};
-      const odaFixed    = odaConfig.f !== undefined ? odaConfig.f : (odaConfig.fixed    || 0);
+      const odaFixed = odaConfig.f !== undefined ? odaConfig.f : (odaConfig.fixed || 0);
       const odaVariable = odaConfig.v !== undefined ? odaConfig.v : (odaConfig.variable || 0);
-      const odaMode     = odaConfig.mode || 'legacy';
+      const odaMode = odaConfig.mode || 'legacy';
       const odaThreshold = odaConfig.thresholdWeight || 0;
       if (odaMode === 'switch') {
         odaCharges = chargeableWeight > odaThreshold ? odaVariable * chargeableWeight : odaFixed;

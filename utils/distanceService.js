@@ -148,12 +148,25 @@ export const calculateDistanceBetweenPincode = async (originPincode, destination
 
     // Handle no road route (e.g., islands) - throw error instead of fake distance
     if (element.status === 'ZERO_RESULTS' || element.status === 'NOT_FOUND') {
-      console.warn(`⚠️ No road route found by Google for ${origin}→${destination}`);
-      const err = new Error(`No road route found between ${origin} and ${destination}`);
-      err.code = 'NO_ROAD_ROUTE';
-      err.origin = origin;
-      err.destination = destination;
-      throw err;
+      // Known island pincode prefixes - genuinely no road access
+      // 744xxx = Andaman & Nicobar
+      // 68255x = Lakshadweep (approximate range 682551-682559)
+      const isIsland = origin.startsWith('744') || destination.startsWith('744') ||
+        (parseInt(origin, 10) >= 682551 && parseInt(origin, 10) <= 682559) ||
+        (parseInt(destination, 10) >= 682551 && parseInt(destination, 10) <= 682559);
+
+      if (isIsland) {
+        // Genuine island - no road route is correct
+        console.warn(`⚠️ No road route found by Google for island route ${origin}→${destination}`);
+        const err = new Error(`No road route found between ${origin} and ${destination}`);
+        err.code = 'NO_ROAD_ROUTE';
+        throw err;
+      }
+
+      // Border area or remote region - Google is wrong/conservative, use haversine fallback
+      // For border areas like J&K (19xxxx), 1.35x haversine is often very accurate (e.g. 193225 997km vs 1007km actual)
+      console.warn(`⚠️ Google returned ${element.status} for ${origin}→${destination}, using haversine fallback (border/remote region)`);
+      return createHaversineFallbackResult(origin, destination, straightLineKm);
     }
 
     if (element.status !== 'OK') {
