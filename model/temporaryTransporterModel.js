@@ -21,7 +21,7 @@ const temporaryTransporterModel = new mongoose.Schema(
     // Flow: pending → approved/rejected (by admin)
     approvalStatus: {
       type: String,
-      enum: ["pending", "approved", "rejected"],
+      enum: ["pending", "approved", "rejected", "draft"],
       default: "approved",
     },
     // VERIFICATION: Manual trust indicator (separate from approval!)

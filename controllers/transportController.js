@@ -740,7 +740,7 @@ export const calculatePrice = async (req, res) => {
               // Use the zones from serviceability
               effectiveOriginZone = originEntry.zone?.toUpperCase() || originZone;
               effectiveDestZone = destEntry.zone?.toUpperCase() || destZone;
-              destIsOda = destEntry.isODA === true;
+              destIsOda = !!(destEntry.isOda || destEntry.isODA);
             } else {
               // ============================================================
               // LEGACY FALLBACK DISABLED (2026-01-30)
@@ -808,7 +808,21 @@ export const calculatePrice = async (req, res) => {
             const greenTax = pr.greenTax || 0;
             const daccCharges = pr.daccCharges || 0;
             const miscCharges = pr.miscellanousCharges || 0;
-            const fuelCharges = ((pr.fuel || 0) / 100) * baseFreight;
+            // ⚠️  FUEL SURCHARGE FORMULA — READ BEFORE MODIFYING ⚠️
+            // ─────────────────────────────────────────────────────────────────
+            // `pr.fuel`    = percentage stored as a whole number (e.g. 5 → 5%)
+            // `pr.fuelMax` = ₹ rupee CAP that simulates a flat-rate fuel charge
+            //
+            // Flat-rate pattern : fuel=100  + fuelMax=400  → always ₹400 max
+            // Percentage pattern: fuel=5    + fuelMax=0/null → 5% of baseFreight
+            //
+            // NEVER remove the Math.min / fuelMax cap — doing so will make
+            // vendors that use the flat-rate pattern charge 100% of baseFreight
+            // (effectively doubling the price).  Confirm with the user BEFORE
+            // changing this formula or the field semantics in the DB/UTSF files.
+            // MUST stay in sync with Block 2 (line ~1074) and utsfService.js (~line 497).
+            // ─────────────────────────────────────────────────────────────────
+            const fuelCharges = Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity);
             const rovCharges = Math.max(
               ((pr.rovCharges?.variable || 0) / 100) * baseFreight,
               pr.rovCharges?.fixed || 0
@@ -1071,6 +1085,20 @@ export const calculatePrice = async (req, res) => {
             const greenTax = pr.greenTax || 0;
             const daccCharges = pr.daccCharges || 0;
             const miscCharges = pr.miscellanousCharges || 0;
+            // ⚠️  FUEL SURCHARGE FORMULA — READ BEFORE MODIFYING ⚠️
+            // ─────────────────────────────────────────────────────────────────
+            // `pr.fuel`    = percentage stored as a whole number (e.g. 5 → 5%)
+            // `pr.fuelMax` = ₹ rupee CAP that simulates a flat-rate fuel charge
+            //
+            // Flat-rate pattern : fuel=100  + fuelMax=400  → always ₹400 max
+            // Percentage pattern: fuel=5    + fuelMax=0/null → 5% of baseFreight
+            //
+            // NEVER remove the Math.min / fuelMax cap — doing so will make
+            // vendors that use the flat-rate pattern charge 100% of baseFreight
+            // (effectively doubling the price).  Confirm with the user BEFORE
+            // changing this formula or the field semantics in the DB/UTSF files.
+            // MUST stay in sync with Block 1 (line ~811) and utsfService.js (~line 497).
+            // ─────────────────────────────────────────────────────────────────
             const fuelCharges = Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity);
             const rovCharges = Math.max(
               ((pr.rovCharges?.variable || 0) / 100) * baseFreight,
@@ -1250,31 +1278,24 @@ export const calculatePrice = async (req, res) => {
           companyName: utsf.companyName,
           customerID: utsf.customerID,
           totalCharges: utsf.totalCharges,
-          est_time: estTime, // Use same estimated time
+          estimatedTime: estTime, // Use same estimated time (matches MongoDB vendor format)
           distance: dist, // Use same distance
           zone: `${utsf.originZone} → ${utsf.destZone}`,
           rating: utsf.rating || 4.0,
           isVerified: utsf.isVerified || false,
           source: 'utsf', // Mark as UTSF source
-          breakdown: {
-            baseFreight: utsf.breakdown.baseFreight,
-            effectiveBaseFreight: utsf.breakdown.effectiveBaseFreight,
-            docketCharge: utsf.breakdown.docketCharge,
-            greenTax: utsf.breakdown.greenTax,
-            daccCharges: utsf.breakdown.daccCharges,
-            miscCharges: utsf.breakdown.miscCharges,
-            fuelCharges: utsf.breakdown.fuelCharges,
-            rovCharges: utsf.breakdown.rovCharges,
-            insuaranceCharges: utsf.breakdown.insuaranceCharges,
-            odaCharges: utsf.breakdown.odaCharges,
-            handlingCharges: utsf.breakdown.handlingCharges,
-            fmCharges: utsf.breakdown.fmCharges,
-            appointmentCharges: utsf.breakdown.appointmentCharges
-          },
+          // Flatten breakdown to root so CalculationDetailsPage can read quote.docketCharge etc.
+          ...utsf.breakdown,
+          breakdown: utsf.breakdown,
           isOda: utsf.isOda || false,
+          unitPrice: utsf.unitPrice,
+          originPincode: fromPincode,
+          destinationPincode: toPincode,
           chargeableWeight: chargeableWeight,
           actualWeight: actualWeight,
-          volumetricWeight: defaultVolWeight
+          volumetricWeight: defaultVolWeight,
+          // Pass formulaParams so CalculationDetailsPage can render the full breakdown
+          formulaParams: utsf.formulaParams,
         }));
 
         console.timeEnd(`[${rid}] UTSF_CALC`);
@@ -1507,6 +1528,7 @@ export const addTiedUpCompany = async (req, res) => {
       cftFactor,
       // NEW: Individual vendor rating parameters
       vendorRatings,
+      isDraft, // ✅ Received from frontend
     } = req.body;
 
     // Debug: Log received values to verify they're coming through
@@ -1625,33 +1647,45 @@ export const addTiedUpCompany = async (req, res) => {
     const hasPriceChart = priceChart && typeof priceChart === 'object' && Object.keys(priceChart).length > 0;
 
     // Basic required field validation
-    if (
-      !customerID ||
-      !vendorCode ||
-      !vendorPhone ||
-      !vendorEmail ||
-      !gstNo ||
-      !transportMode ||
-      !address ||
-      !state ||
-      !pincode ||
-      !rating ||
-      !companyName ||
-      !priceRate
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "customerID, companyName, and priceRate are required",
-      });
-    }
+    // ✅ DRAFT MODE: Skip strict validation
+    if (isDraft) {
+      if (!customerID || !companyName) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "customerID and companyName are required even for drafts",
+        });
+      }
+    } else {
+      if (
+        !customerID ||
+        !vendorCode ||
+        !vendorPhone ||
+        !vendorEmail ||
+        !gstNo ||
+        !transportMode ||
+        !address ||
+        !state ||
+        !pincode ||
+        !rating ||
+        !companyName ||
+        !priceRate
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "customerID, companyName, and priceRate are required",
+        });
+      }
 
-    // Must have either serviceability or priceChart
-    if (!hasServiceability && !hasPriceChart) {
-      return res.status(400).json({
-        success: false,
-        message: "Either serviceability data or priceChart is required",
-      });
+      // Must have either serviceability or priceChart (only for final submit)
+      if (!hasServiceability && !hasPriceChart) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Either serviceability data or priceChart is required",
+        });
+      }
     }
 
     // Enhanced companyName validation
@@ -1665,34 +1699,37 @@ export const addTiedUpCompany = async (req, res) => {
     // Input validation and sanitization
     const validationErrors = [];
 
-    if (!validateEmail(vendorEmail)) {
-      validationErrors.push("Invalid email format");
-    }
+    // ✅ DRAFT MODE: Skip detailed validation checks
+    if (!isDraft) {
+      if (!validateEmail(vendorEmail)) {
+        validationErrors.push("Invalid email format");
+      }
 
-    if (!validatePhone(vendorPhone)) {
-      validationErrors.push(
-        "Invalid phone number format (must be 10 digits, cannot start with 0)"
-      );
-    }
+      if (!validatePhone(vendorPhone)) {
+        validationErrors.push(
+          "Invalid phone number format (must be 10 digits, cannot start with 0)"
+        );
+      }
 
-    if (!validateGSTIN(gstNo)) {
-      validationErrors.push("Invalid GSTIN format");
-    }
+      if (!validateGSTIN(gstNo)) {
+        validationErrors.push("Invalid GSTIN format");
+      }
 
-    if (!validatePincode(pincode)) {
-      validationErrors.push("Invalid pincode format (must be 6 digits)");
-    }
+      if (!validatePincode(pincode)) {
+        validationErrors.push("Invalid pincode format (must be 6 digits)");
+      }
 
-    if (
-      selectedZones &&
-      Array.isArray(selectedZones) &&
-      selectedZones.length > 0
-    ) {
-      const sanitizedZones = sanitizeZoneCodes(selectedZones);
-      const matrixValidation = validateZoneMatrix(priceChart, sanitizedZones);
+      if (
+        selectedZones &&
+        Array.isArray(selectedZones) &&
+        selectedZones.length > 0
+      ) {
+        const sanitizedZones = sanitizeZoneCodes(selectedZones);
+        const matrixValidation = validateZoneMatrix(priceChart, sanitizedZones);
 
-      if (!matrixValidation.valid) {
-        validationErrors.push(...matrixValidation.errors);
+        if (!matrixValidation.valid) {
+          validationErrors.push(...matrixValidation.errors);
+        }
       }
     }
 
@@ -1797,6 +1834,8 @@ export const addTiedUpCompany = async (req, res) => {
       city: sanitizedCity,
       pincode: Number(pincode),
       rating: Number(rating) || 3,
+      // APPROVAL STATUS: Drafts are 'draft', others 'approved'
+      approvalStatus: isDraft ? 'draft' : 'approved',
       // NEW: Individual vendor rating parameters
       vendorRatings: vendorRatings || {
         priceSupport: 0,
@@ -1826,7 +1865,7 @@ export const addTiedUpCompany = async (req, res) => {
         priceChart: priceChart || {},
       },
       invoiceValueCharges: finalInvoiceValueCharges,
-    }).save();
+    }).save({ validateBeforeSave: !isDraft });
 
     if (tempData) {
       return res.status(201).json({

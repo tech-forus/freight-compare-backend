@@ -34,6 +34,7 @@ import ratingRoute from './routes/ratingRoute.js';
 // ✅ NEW: UTSF routes (Universal Transporter Save Format)
 import utsfRoute from './routes/utsfRoute.js';
 import utsfService from './services/utsfService.js';
+import searchHistoryRoute from './routes/searchHistoryRoute.js';
 
 // Dev-stub routes (ESM imports)
 import dashboardRoutes from "./routes/dashboard.js";
@@ -223,6 +224,8 @@ app.use('/api/form-config', formConfigRoute);
 app.use('/api/ratings', ratingRoute);
 // ✅ NEW: UTSF endpoint (Universal Transporter Save Format)
 app.use('/api/utsf', utsfRoute);
+// ✅ NEW: Search history (Recent Searches - last 7 days, per user)
+app.use('/api/search-history', searchHistoryRoute);
 
 // Bulk upload stub
 app.post("/upload", async (req, res) => {

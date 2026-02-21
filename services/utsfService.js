@@ -493,7 +493,21 @@ class UTSFTransporter {
     const daccCharges = pr.daccCharges || 0;
     const miscCharges = pr.miscellanousCharges || pr.miscCharges || 0;
 
-    // Fuel charges (percentage of baseFreight, NOT effectiveBase - line 799)
+    // ⚠️  FUEL SURCHARGE FORMULA — READ BEFORE MODIFYING ⚠️
+    // ─────────────────────────────────────────────────────────────────
+    // `pr.fuel`    = percentage stored as a whole number (e.g. 5 → 5%)
+    // `pr.fuelMax` = ₹ rupee CAP that simulates a flat-rate fuel charge
+    //
+    // Flat-rate pattern : fuel=100  + fuelMax=400  → always ₹400 max
+    // Percentage pattern: fuel=5    + fuelMax=0/null → 5% of baseFreight
+    //
+    // NEVER remove the Math.min / fuelMax cap — doing so will make
+    // vendors that use the flat-rate pattern charge 100% of baseFreight
+    // (effectively doubling the price).  Confirm with the user BEFORE
+    // changing this formula or the field semantics in the DB/UTSF files.
+    // MUST stay in sync with Block 1 (~line 811) and Block 2 (~line 1087) in transportController.js.
+    // ─────────────────────────────────────────────────────────────────
+    // Fuel charges (percentage of baseFreight, NOT effectiveBase)
     const fuelCharges = Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity);
 
     // Helper for variable/fixed charges (max of percentage * baseFreight or fixed)
