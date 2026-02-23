@@ -145,6 +145,18 @@ const customerSchema = new mongoose.Schema({
     type: Number,
     default: 10,
     required: true
+  },
+  sessionVersion: {
+    type: Number,
+    default: 0
+  },
+  rateLimitExempt: {
+    type: Boolean,
+    default: false
+  },
+  customRateLimit: {
+    type: Number,
+    default: 15
   }
 }, { timestamps: true });
 

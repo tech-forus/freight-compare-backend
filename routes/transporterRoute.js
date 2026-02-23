@@ -46,7 +46,7 @@ import {
 
 import { protect } from '../middleware/authMiddleware.js';
 import { hasVendorApprovalPermission } from '../middleware/isAdminMiddleware.js';
-import { uploadLimiter, apiLimiter, authLimiter } from '../middleware/rateLimiter.js';
+import { uploadLimiter, apiLimiter, authLimiter, calculatorRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 const storage = multer.memoryStorage();
@@ -67,7 +67,7 @@ router.post("/auth/addprice", apiLimiter, addPrice);
 router.post("/auth/signin", authLimiter, transporterLogin);
 
 // Calculator & add vendor
-router.post('/calculate', protect, calculatePrice);
+router.post('/calculate', protect, calculatorRateLimiter, calculatePrice);
 router.get('/search-transporters', protect, searchTransporters);  // Fast search - minimal data
 router.get('/search-transporters/:id', protect, getSearchTransporterDetail);  // Full detail by ID
 router.post("/addtiedupcompanies", protect, upload.single('priceChart'), addTiedUpCompany);

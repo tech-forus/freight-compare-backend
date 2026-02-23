@@ -6,6 +6,8 @@ import utsfService from '../services/utsfService.js';
 import UTSFModel from '../model/utsfModel.js';
 import temporaryTransporterModel from '../model/temporaryTransporterModel.js';
 import multer from 'multer';
+import { protect } from '../middleware/authMiddleware.js';
+import { calculatorRateLimiter } from '../middleware/rateLimiter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -132,7 +134,7 @@ router.get('/transporters/:id', (req, res) => {
  * Calculate price using UTSF data
  * Body: { fromPincode, toPincode, weight, dimensions, noofboxes, shipment_details?, invoiceValue? }
  */
-router.post('/calculate', (req, res) => {
+router.post('/calculate', protect, calculatorRateLimiter, (req, res) => {
   try {
     const {
       fromPincode,

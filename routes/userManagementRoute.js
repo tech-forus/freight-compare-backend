@@ -9,6 +9,8 @@ import {
   getAllCustomers,
   getCustomerById,
   updateCustomerSubscription,
+  updateCustomerRateLimitExempt,
+  updateCustomerCustomRateLimit,
   updateCustomer,
   deleteCustomer,
   getAllTransporters,
@@ -31,6 +33,8 @@ router.get('/stats', hasDashboardPermission, getPlatformStats);
 router.get('/customers', hasUserManagementPermission, getAllCustomers);
 router.get('/customers/:id', hasUserManagementPermission, getCustomerById);
 router.put('/customers/:id/subscription', hasUserManagementPermission, updateCustomerSubscription);
+router.put('/customers/:id/rate-limit-exempt', hasUserManagementPermission, updateCustomerRateLimitExempt);
+router.put('/customers/:id/custom-rate-limit', hasUserManagementPermission, updateCustomerCustomRateLimit);
 router.put('/customers/:id', hasUserManagementPermission, updateCustomer);
 router.delete('/customers/:id', hasUserManagementPermission, deleteCustomer);
 

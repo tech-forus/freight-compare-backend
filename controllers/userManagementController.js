@@ -2,6 +2,7 @@ import customerModel from "../model/customerModel.js";
 import transporterModel from "../model/transporterModel.js";
 import temporaryTransporterModel from "../model/temporaryTransporterModel.js";
 import { DEFAULT_ADMIN_PERMISSIONS, validatePermissions } from "../config/adminPermissions.js";
+import redisClient from "../utils/redisClient.js";
 
 /**
  * GET /api/admin/customers
@@ -135,6 +136,95 @@ export const updateCustomerSubscription = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to update subscription status',
+    });
+  }
+};
+
+/**
+ * PUT /api/admin/customers/:id/rate-limit-exempt
+ * Toggle customer rate limit exemption
+ */
+export const updateCustomerRateLimitExempt = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rateLimitExempt } = req.body;
+
+    const customer = await customerModel.findByIdAndUpdate(
+      id,
+      { rateLimitExempt: Boolean(rateLimitExempt) },
+      { new: true }
+    ).select('-password');
+
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Rate limit exemption ${rateLimitExempt ? 'enabled' : 'disabled'} for ${customer.firstName} ${customer.lastName}`,
+      data: customer,
+    });
+  } catch (error) {
+    console.error('[Admin] Error updating rate limit exemption:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update rate limit exemption',
+    });
+  }
+};
+
+/**
+ * PUT /api/admin/customers/:id/custom-rate-limit
+ * Update customer custom rate limit
+ */
+export const updateCustomerCustomRateLimit = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { customRateLimit } = req.body;
+
+    const limitValue = parseInt(customRateLimit);
+    if (isNaN(limitValue) || limitValue < 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid rate limit value. Must be a positive integer.',
+      });
+    }
+
+    const customer = await customerModel.findByIdAndUpdate(
+      id,
+      { customRateLimit: limitValue },
+      { new: true }
+    ).select('-password');
+
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found',
+      });
+    }
+
+    // Reset Redis counter so user isn't stuck with stale count > new limit
+    try {
+      const redisKey = `calc_limit:${id}`;
+      await redisClient.del(redisKey);
+      console.log(`[Admin] Reset Redis counter for user ${id} after rate limit change to ${limitValue}`);
+    } catch (redisErr) {
+      console.warn('[Admin] Could not reset Redis counter (non-fatal):', redisErr.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Custom rate limit for ${customer.firstName} updated to ${limitValue} searches per hour`,
+      data: customer,
+    });
+  } catch (error) {
+    console.error('[Admin] Error updating custom rate limit:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update custom rate limit',
     });
   }
 };

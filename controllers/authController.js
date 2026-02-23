@@ -384,6 +384,14 @@ export const loginController = async (req, res) => {
       return res.status(401).json({ message: "Invalid credentials." });
     }
 
+    // Increment sessionVersion (invalidates all previous sessions for this user)
+    const updatedCustomer = await customerModel.findByIdAndUpdate(
+      customer._id,
+      { $inc: { sessionVersion: 1 } },
+      { new: true }
+    );
+    const newSessionVersion = updatedCustomer.sessionVersion;
+
     // Create JWT payload
     const payload = {
       customer: {
@@ -409,6 +417,7 @@ export const loginController = async (req, res) => {
           vendorApproval: false,
           userManagement: false,
         },
+        sessionVersion: newSessionVersion,
       },
     };
 
@@ -502,6 +511,9 @@ export const forgotPasswordController = async (req, res) => {
     customer.password = hashedPassword;
     await customer.save();
 
+    // Increment sessionVersion to invalidate all existing sessions after password reset
+    await customerModel.findByIdAndUpdate(customer._id, { $inc: { sessionVersion: 1 } });
+
     const fullName = `${customer.firstName} ${customer.lastName}`;
 
     // Email template
@@ -592,6 +604,9 @@ export const changePasswordController = async (req, res) => {
     const hashedPassword = await bcrypt.hash(newpassword, salt);
     user.password = hashedPassword;
     await user.save();
+
+    // Increment sessionVersion to invalidate all existing sessions after password change
+    await customerModel.findByIdAndUpdate(user._id, { $inc: { sessionVersion: 1 } });
 
     const fullName = `${user.firstName} ${user.lastName}`;
 

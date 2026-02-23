@@ -28,7 +28,8 @@ const searchHistorySchema = new mongoose.Schema({
     fromPincode: { type: String, required: true, trim: true },
     fromCity: { type: String, default: '', trim: true },
     fromState: { type: String, default: '', trim: true },
-    toPincode: { type: String, required: true, trim: true },
+    toPincode: { type: String, required: true, trim: true },   // effective pincode used (may be nearest serviceable)
+    originalToPincode: { type: String, default: '', trim: true }, // what the user originally typed (if nearest was substituted)
     toCity: { type: String, default: '', trim: true },
     toState: { type: String, default: '', trim: true },
     modeOfTransport: {

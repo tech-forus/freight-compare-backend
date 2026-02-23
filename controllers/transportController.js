@@ -658,8 +658,9 @@ export const calculatePrice = async (req, res) => {
           .status(404)
           .json({ success: false, message: "Customer not found" });
       }
-      const isSubscribed = !!customerData.isSubscribed;
 
+      // 🔓 Subscription Gating Disabled: All users receive full vendor details
+      const isSubscribed = true; // previously: !!customerData.isSubscribed;
       // Zone lookup (fast - uses in-memory map)
       const fromZoneRaw = zoneForPincode(fromPinStr);
       const toZoneRaw = zoneForPincode(toPinStr);

@@ -2,8 +2,8 @@ import mongoose from 'mongoose';
 import SearchHistory from '../model/searchHistoryModel.js';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-const MAX_HISTORY_ENTRIES = 20;
 const MAX_TOP_QUOTES = 5;
+const PAGE_LIMIT_MAX = 50; // hard ceiling per page
 
 /**
  * POST /api/search-history
@@ -15,7 +15,7 @@ export const saveHistory = async (req, res) => {
         const customerId = req.customer._id;
         const {
             fromPincode, fromCity, fromState,
-            toPincode, toCity, toState,
+            toPincode, originalToPincode, toCity, toState,
             modeOfTransport, distanceKm,
             boxes, totalBoxes, totalWeight,
             invoiceValue, topQuotes
@@ -49,6 +49,7 @@ export const saveHistory = async (req, res) => {
             fromCity: String(fromCity || '').trim(),
             fromState: String(fromState || '').trim(),
             toPincode: String(toPincode).trim(),
+            originalToPincode: originalToPincode ? String(originalToPincode).trim() : '',
             toCity: String(toCity || '').trim(),
             toState: String(toState || '').trim(),
             modeOfTransport,
@@ -68,21 +69,37 @@ export const saveHistory = async (req, res) => {
 };
 
 /**
- * GET /api/search-history
- * Return the authenticated user's search history from the last 7 days (max 20 entries).
+ * GET /api/search-history?page=1&limit=15
+ * Return the authenticated user's search history from the last 7 days, paginated.
+ * Defaults: page=1, limit=15. Max limit=50.
  */
 export const getHistory = async (req, res) => {
     try {
         const customerId = req.customer._id;
         const sevenDaysAgo = new Date(Date.now() - SEVEN_DAYS_MS);
 
-        const entries = await SearchHistory
-            .find({ customerId, createdAt: { $gte: sevenDaysAgo } })
-            .sort({ createdAt: -1 })
-            .limit(MAX_HISTORY_ENTRIES)
-            .lean();
+        const page  = Math.max(1, parseInt(req.query.page,  10) || 1);
+        const limit = Math.min(PAGE_LIMIT_MAX, Math.max(1, parseInt(req.query.limit, 10) || 15));
+        const skip  = (page - 1) * limit;
 
-        return res.status(200).json({ success: true, data: entries });
+        const query = { customerId, createdAt: { $gte: sevenDaysAgo } };
+
+        // Run fetch + count in parallel — single round-trip to MongoDB
+        const [entries, total] = await Promise.all([
+            SearchHistory.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+            SearchHistory.countDocuments(query),
+        ]);
+
+        return res.status(200).json({
+            success: true,
+            data: entries,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+            },
+        });
     } catch (err) {
         console.error('[SearchHistory] getHistory error:', err);
         return res.status(500).json({ success: false, message: 'Failed to fetch search history' });

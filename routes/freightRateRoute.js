@@ -1,10 +1,12 @@
 import express from 'express';
 import { freightRateController } from '../controllers/freightRateController.js';
+import { protect } from '../middleware/authMiddleware.js';
+import { calculatorRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
 // Calculate freight rate for a single shipment
-router.post('/calculate', freightRateController.calculateFreightRate);
+router.post('/calculate', protect, calculatorRateLimiter, freightRateController.calculateFreightRate);
 
 // Get available options (vehicles, weights, distances)
 router.get('/options', freightRateController.getAvailableOptions);

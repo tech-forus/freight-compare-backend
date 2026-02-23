@@ -44,7 +44,7 @@ export const protect = async (req, res, next) => {
     if (
       !JWT_SECRET ||
       JWT_SECRET ===
-        'your_jwt_secret_key_change_this_to_a_secure_random_string_minimum_32_characters'
+      'your_jwt_secret_key_change_this_to_a_secure_random_string_minimum_32_characters'
     ) {
       console.error('FATAL ERROR: JWT_SECRET is not properly configured.');
       return res.status(500).json({
@@ -70,6 +70,19 @@ export const protect = async (req, res, next) => {
       return res.status(401).json({
         success: false,
         message: 'Not authorized, user not found',
+      });
+    }
+
+    // Single-session enforcement: compare JWT sessionVersion with DB sessionVersion
+    // Guard: only enforce if the JWT actually contains sessionVersion (backward compatible)
+    if (
+      decoded.customer.sessionVersion !== undefined &&
+      decoded.customer.sessionVersion !== customer.sessionVersion
+    ) {
+      return res.status(401).json({
+        success: false,
+        message: 'Session expired. You have been logged in on another device.',
+        code: 'SESSION_REPLACED',
       });
     }
 
