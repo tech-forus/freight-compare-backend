@@ -284,9 +284,6 @@ class UTSFTransporter {
   /**
    * Check if pincode is serviceable (O(1) lookup)
    */
-  /**
-   * Check if pincode is serviceable (O(1) lookup)
-   */
   isServiceable(pincode) {
     const pin = parseInt(pincode, 10);
 
@@ -438,10 +435,12 @@ class UTSFTransporter {
     const toResult = this.checkServiceability(toPincode);
 
     if (!fromResult.isServiceable) {
+      console.warn(`[UTSF PRICING FAIL] Transporter "${this.companyName}" (${this.id}) rejected: Origin unserviceable (${fromPincode} - ${fromResult.reason})`);
       return { error: `Origin ${fromPincode}: ${fromResult.reason}` };
     }
 
     if (!toResult.isServiceable) {
+      console.warn(`[UTSF PRICING FAIL] Transporter "${this.companyName}" (${this.id}) rejected: Destination unserviceable (${toPincode} - ${toResult.reason})`);
       return { error: `Destination ${toPincode}: ${toResult.reason}` };
     }
 
@@ -458,6 +457,7 @@ class UTSFTransporter {
     }
 
     if (unitPrice === null) {
+      console.warn(`[UTSF PRICING FAIL] Transporter "${this.companyName}" (${this.id}) rejected: No rate matrix found for zone combination ${originZone} -> ${destZone}`);
       return { error: `No rate for zone combination ${originZone} -> ${destZone}` };
     }
 
@@ -811,6 +811,13 @@ class UTSFService {
           ...priceResult,
           source: 'utsf'
         });
+      } else {
+        // 🛑 REJECTION LOGGING 🛑
+        console.warn(`\n[UTSF REJECTED ROUTE] ---------------------------------------------`);
+        console.warn(`   Transporter : ${transporter.companyName} (${transporter.id})`);
+        console.warn(`   Route       : ${fromPincode} -> ${toPincode} | Weight: ${chargeableWeight}kg`);
+        console.warn(`   Reason      : ${priceResult?.error || 'Unknown Error / Calculation Failed'}`);
+        console.warn(`-------------------------------------------------------------------`);
       }
     }
 
@@ -839,13 +846,6 @@ class UTSFService {
       console.log(`[UTSF] Removed transporter: ${id}`);
     }
     return deleted;
-  }
-
-  /**
-   * Get transporter by ID
-   */
-  getTransporterById(id) {
-    return this.transporters.get(id) || null;
   }
 
   /**
