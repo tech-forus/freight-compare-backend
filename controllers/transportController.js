@@ -228,6 +228,35 @@ function clampNumber(v, min, max) {
  * ✅ NEW HELPER: Calculate invoice value based charges
  * Logic: MAX( (InvoiceValue * Percentage / 100), MinimumAmount )
  */
+
+/**
+ * Compute the total of all custom/carrier-specific surcharges.
+ * Formula types:
+ *   PCT_OF_BASE      – (value/100) × baseFreight
+ *   PCT_OF_SUBTOTAL  – (value/100) × standardSubtotal
+ *   FLAT             – fixed ₹ per shipment
+ *   PER_KG           – value × chargeableWeight
+ *   MAX_FLAT_PKG     – max(value, value2 × chargeableWeight)
+ */
+function computeCustomSurcharges(surcharges, baseFreight, chargeableWeight, standardSubtotal) {
+  if (!surcharges || !surcharges.length) return 0;
+  return surcharges
+    .filter(s => s && s.enabled !== false)
+    .sort((a, b) => (a.order || 99) - (b.order || 99))
+    .reduce((acc, s) => {
+      const v  = Number(s.value)  || 0;
+      const v2 = Number(s.value2) || 0;
+      switch (s.formula) {
+        case 'PCT_OF_BASE':     return acc + (v / 100) * baseFreight;
+        case 'PCT_OF_SUBTOTAL': return acc + (v / 100) * standardSubtotal;
+        case 'FLAT':            return acc + v;
+        case 'PER_KG':          return acc + v * chargeableWeight;
+        case 'MAX_FLAT_PKG':    return acc + Math.max(v, v2 * chargeableWeight);
+        default:                return acc;
+      }
+    }, 0);
+}
+
 function calculateInvoiceValueCharge(invoiceValue, invoiceValueCharges) {
   // If not enabled or no invoice value, return 0
   if (!invoiceValueCharges?.enabled || !invoiceValue || invoiceValue <= 0) {
@@ -852,7 +881,7 @@ export const calculatePrice = async (req, res) => {
             // effectiveBaseFreight ensures freight is never below minimum
             const effectiveBaseFreight = Math.max(baseFreight, minCharges);
 
-            const totalChargesBeforeAddon =
+            const _standardSubtotal1 =
               effectiveBaseFreight +
               docketCharge +
               greenTax +
@@ -865,6 +894,9 @@ export const calculatePrice = async (req, res) => {
               handlingCharges +
               fmCharges +
               appointmentCharges;
+            const totalChargesBeforeAddon =
+              _standardSubtotal1 +
+              computeCustomSurcharges(pr.surcharges, baseFreight, chargeableWeight, _standardSubtotal1);
 
             // 🔍 DEBUG: Log CALCULATED values for "Add Jan"
             // PERFORMANCE: Only log when ENABLE_VENDOR_DEBUG_LOGGING is true (disabled in production)
@@ -1139,7 +1171,7 @@ export const calculatePrice = async (req, res) => {
             // effectiveBaseFreight ensures freight is never below minimum
             const effectiveBaseFreight = Math.max(baseFreight, minCharges);
 
-            const totalChargesBeforeAddon =
+            const _standardSubtotal2 =
               effectiveBaseFreight +
               docketCharge +
               greenTax +
@@ -1152,6 +1184,9 @@ export const calculatePrice = async (req, res) => {
               handlingCharges +
               fmCharges +
               appointmentCharges;
+            const totalChargesBeforeAddon =
+              _standardSubtotal2 +
+              computeCustomSurcharges(pr.surcharges, baseFreight, chargeableWeight, _standardSubtotal2);
 
             // PERF: Removed verbose per-vendor success logging
 

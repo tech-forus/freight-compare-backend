@@ -563,6 +563,26 @@ class UTSFTransporter {
       invoiceValueCharges = Math.max((percentage / 100) * invoiceValue, minAmount);
     }
 
+    // Custom surcharges (carrier-specific: IDC, CAF, reattempt, etc.)
+    const _standardSub = effectiveBaseFreight + docketCharge + greenTax + daccCharges
+      + miscCharges + fuelCharges + rovCharges + insuaranceCharges + odaCharges
+      + handlingCharges + fmCharges + appointmentCharges + invoiceValueCharges;
+    const _customSurcharges = (pr.surcharges || [])
+      .filter(s => s && s.enabled !== false)
+      .sort((a, b) => (a.order || 99) - (b.order || 99))
+      .reduce((acc, s) => {
+        const v  = Number(s.value)  || 0;
+        const v2 = Number(s.value2) || 0;
+        switch (s.formula) {
+          case 'PCT_OF_BASE':     return acc + (v / 100) * baseFreight;
+          case 'PCT_OF_SUBTOTAL': return acc + (v / 100) * _standardSub;
+          case 'FLAT':            return acc + v;
+          case 'PER_KG':          return acc + v * chargeableWeight;
+          case 'MAX_FLAT_PKG':    return acc + Math.max(v, v2 * chargeableWeight);
+          default:                return acc;
+        }
+      }, 0);
+
     // Total (lines 828-841)
     let totalChargesBeforeAddon =
       effectiveBaseFreight +
@@ -577,7 +597,8 @@ class UTSFTransporter {
       handlingCharges +
       fmCharges +
       appointmentCharges +
-      invoiceValueCharges;
+      invoiceValueCharges +
+      _customSurcharges;
 
     // Apply minimum total charges if configured (e.g., DB Schenker 400 INR is total floor)
     // This uses the minBaseFreight key if minApplyToTotal is true, OR an explicit minTotalCharges key

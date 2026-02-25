@@ -190,6 +190,25 @@ const pricesSchema = new mongoose.Schema(
         required: true,
         default: 0,
       },
+
+      // ─── Custom / carrier-specific surcharges ───────────────────────────────
+      // Supports any number of extra charges that the standard fields cannot express.
+      // Formula types:
+      //   PCT_OF_BASE      → (value/100) × baseFreight
+      //   PCT_OF_SUBTOTAL  → (value/100) × running subtotal after standard charges
+      //   FLAT             → fixed ₹ per shipment
+      //   PER_KG           → value × chargeableWeight
+      //   MAX_FLAT_PKG     → max(value, value2 × chargeableWeight)
+      surcharges: [{
+        _id: false,
+        id:      { type: String, required: true },
+        label:   { type: String, required: true },
+        formula: { type: String, enum: ['PCT_OF_BASE', 'PCT_OF_SUBTOTAL', 'FLAT', 'PER_KG', 'MAX_FLAT_PKG'], required: true },
+        value:   { type: Number, default: 0 },
+        value2:  { type: Number, default: 0 }, // only for MAX_FLAT_PKG
+        order:   { type: Number, default: 99 },
+        enabled: { type: Boolean, default: true },
+      }],
     },
     zoneRates: {
       type: Map,
