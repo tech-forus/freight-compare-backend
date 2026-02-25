@@ -284,9 +284,6 @@ class UTSFTransporter {
   /**
    * Check if pincode is serviceable (O(1) lookup)
    */
-  /**
-   * Check if pincode is serviceable (O(1) lookup)
-   */
   isServiceable(pincode) {
     const pin = parseInt(pincode, 10);
 
@@ -438,10 +435,12 @@ class UTSFTransporter {
     const toResult = this.checkServiceability(toPincode);
 
     if (!fromResult.isServiceable) {
+      console.warn(`[UTSF PRICING FAIL] Transporter "${this.companyName}" (${this.id}) rejected: Origin unserviceable (${fromPincode} - ${fromResult.reason})`);
       return { error: `Origin ${fromPincode}: ${fromResult.reason}` };
     }
 
     if (!toResult.isServiceable) {
+      console.warn(`[UTSF PRICING FAIL] Transporter "${this.companyName}" (${this.id}) rejected: Destination unserviceable (${toPincode} - ${toResult.reason})`);
       return { error: `Destination ${toPincode}: ${toResult.reason}` };
     }
 
@@ -458,6 +457,7 @@ class UTSFTransporter {
     }
 
     if (unitPrice === null) {
+      console.warn(`[UTSF PRICING FAIL] Transporter "${this.companyName}" (${this.id}) rejected: No rate matrix found for zone combination ${originZone} -> ${destZone}`);
       return { error: `No rate for zone combination ${originZone} -> ${destZone}` };
     }
 
@@ -563,6 +563,26 @@ class UTSFTransporter {
       invoiceValueCharges = Math.max((percentage / 100) * invoiceValue, minAmount);
     }
 
+    // Custom surcharges (carrier-specific: IDC, CAF, reattempt, etc.)
+    const _standardSub = effectiveBaseFreight + docketCharge + greenTax + daccCharges
+      + miscCharges + fuelCharges + rovCharges + insuaranceCharges + odaCharges
+      + handlingCharges + fmCharges + appointmentCharges + invoiceValueCharges;
+    const _customSurcharges = (pr.surcharges || [])
+      .filter(s => s && s.enabled !== false)
+      .sort((a, b) => (a.order || 99) - (b.order || 99))
+      .reduce((acc, s) => {
+        const v  = Number(s.value)  || 0;
+        const v2 = Number(s.value2) || 0;
+        switch (s.formula) {
+          case 'PCT_OF_BASE':     return acc + (v / 100) * baseFreight;
+          case 'PCT_OF_SUBTOTAL': return acc + (v / 100) * _standardSub;
+          case 'FLAT':            return acc + v;
+          case 'PER_KG':          return acc + v * chargeableWeight;
+          case 'MAX_FLAT_PKG':    return acc + Math.max(v, v2 * chargeableWeight);
+          default:                return acc;
+        }
+      }, 0);
+
     // Total (lines 828-841)
     let totalChargesBeforeAddon =
       effectiveBaseFreight +
@@ -577,7 +597,8 @@ class UTSFTransporter {
       handlingCharges +
       fmCharges +
       appointmentCharges +
-      invoiceValueCharges;
+      invoiceValueCharges +
+      _customSurcharges;
 
     // Apply minimum total charges if configured (e.g., DB Schenker 400 INR is total floor)
     // This uses the minBaseFreight key if minApplyToTotal is true, OR an explicit minTotalCharges key
@@ -790,6 +811,13 @@ class UTSFService {
           ...priceResult,
           source: 'utsf'
         });
+      } else {
+        // 🛑 REJECTION LOGGING 🛑
+        console.warn(`\n[UTSF REJECTED ROUTE] ---------------------------------------------`);
+        console.warn(`   Transporter : ${transporter.companyName} (${transporter.id})`);
+        console.warn(`   Route       : ${fromPincode} -> ${toPincode} | Weight: ${chargeableWeight}kg`);
+        console.warn(`   Reason      : ${priceResult?.error || 'Unknown Error / Calculation Failed'}`);
+        console.warn(`-------------------------------------------------------------------`);
       }
     }
 
@@ -818,13 +846,6 @@ class UTSFService {
       console.log(`[UTSF] Removed transporter: ${id}`);
     }
     return deleted;
-  }
-
-  /**
-   * Get transporter by ID
-   */
-  getTransporterById(id) {
-    return this.transporters.get(id) || null;
   }
 
   /**
