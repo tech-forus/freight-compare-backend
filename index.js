@@ -35,6 +35,8 @@ import ratingRoute from './routes/ratingRoute.js';
 import utsfRoute from './routes/utsfRoute.js';
 import utsfService from './services/utsfService.js';
 import searchHistoryRoute from './routes/searchHistoryRoute.js';
+// ✅ NEW: Draft routes (ignores strict constraints)
+import draftRoutes from './routes/draftRoutes.js';
 
 // Dev-stub routes (ESM imports)
 import dashboardRoutes from "./routes/dashboard.js";
@@ -226,6 +228,8 @@ app.use('/api/ratings', ratingRoute);
 app.use('/api/utsf', utsfRoute);
 // ✅ NEW: Search history (Recent Searches - last 7 days, per user)
 app.use('/api/search-history', searchHistoryRoute);
+// ✅ NEW: Draft endpoint (bypass typical validation)
+app.use('/api/drafts', draftRoutes);
 
 // Bulk upload stub
 app.post("/upload", async (req, res) => {

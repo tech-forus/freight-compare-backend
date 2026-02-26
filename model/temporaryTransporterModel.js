@@ -348,17 +348,7 @@ const temporaryTransporterModel = new mongoose.Schema(
         description: { type: String, default: 'Invoice Value Handling Charges' },
       },
 
-      // ─── Custom / carrier-specific surcharges ───────────────────────────────
-      surcharges: [{
-        _id: false,
-        id:      { type: String, required: true },
-        label:   { type: String, required: true },
-        formula: { type: String, enum: ['PCT_OF_BASE', 'PCT_OF_SUBTOTAL', 'FLAT', 'PER_KG', 'MAX_FLAT_PKG'], required: true },
-        value:   { type: Number, default: 0 },
-        value2:  { type: Number, default: 0 },
-        order:   { type: Number, default: 99 },
-        enabled: { type: Boolean, default: true },
-      }],
+
     },
   },
   { timestamps: true, strict: true }
