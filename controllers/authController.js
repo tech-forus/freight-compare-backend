@@ -1,4 +1,5 @@
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 import dotenv from "dotenv";
 import customerModel from "../model/customerModel.js";
 import jwt from "jsonwebtoken";
@@ -135,6 +136,11 @@ export const initiateSignup = async (req, res) => {
       });
     }
 
+    // Type safety: ensure email/phone are plain strings before hitting MongoDB
+    if (typeof email !== 'string' || typeof phone !== 'string') {
+      return res.status(400).json({ message: "Invalid input format." });
+    }
+
     // Check if customer already exists
     const existingCustomer = await customerModel.findOne({
       $or: [{ email }, { phone }],
@@ -152,7 +158,7 @@ export const initiateSignup = async (req, res) => {
 
     // Generate email OTP
     const emailOtp = generateOTP();
-    console.log('[Signup] Email OTP generated:', emailOtp);
+    console.log('[Signup] Email OTP generated');
 
     // Send phone OTP via 2Factor
     let phoneSessionId = null;
@@ -357,32 +363,72 @@ export const loginController = async (req, res) => {
       .status(400)
       .json({ message: "Please provide email and password." });
   }
+  if (typeof email !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ message: "Invalid input format." });
+  }
 
   // Check JWT_SECRET configuration
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'your_jwt_secret_key_change_this_to_a_secure_random_string_minimum_32_characters') {
     console.error("FATAL ERROR: JWT_SECRET is not properly configured.");
-    console.error("Current JWT_SECRET value:", process.env.JWT_SECRET ? "SET (but may be default)" : "NOT SET");
     return res.status(500).json({
       message: "Server configuration error: JWT_SECRET not properly set.",
       error: process.env.NODE_ENV === "development" ? "JWT_SECRET missing or using default value" : undefined
     });
   }
 
+  const emailKey = email.toLowerCase().trim();
+  const lockKey = `loginLock:${emailKey}`;
+  const failKey = `loginFail:${emailKey}`;
+
   try {
+    // --- Account lockout check ---
+    const isLocked = await redisClient.get(lockKey);
+    if (isLocked) {
+      return res.status(429).json({
+        message: "Account temporarily locked due to too many failed attempts. Try again in 15 minutes.",
+      });
+    }
+
+    // Helper: count a failed attempt and lock if threshold reached
+    const recordFailedAttempt = async () => {
+      const attempts = await redisClient.incr(failKey);
+      if (attempts === 1) await redisClient.expire(failKey, 900); // 15-min sliding window
+      if (attempts >= 10) {
+        await redisClient.set(lockKey, "1", { EX: 900 });
+        await redisClient.del(failKey);
+        return true; // locked
+      }
+      return false;
+    };
+
     // Find customer by email
-    const customer = await customerModel.findOne({
-      email: email.toLowerCase().trim(),
-    });
+    const customer = await customerModel.findOne({ email: emailKey });
 
     if (!customer) {
+      // Count the attempt even for non-existent emails (prevents user enumeration)
+      const nowLocked = await recordFailedAttempt();
+      if (nowLocked) {
+        return res.status(429).json({
+          message: "Account locked for 15 minutes due to too many failed attempts.",
+        });
+      }
       return res.status(401).json({ message: "Invalid credentials." });
     }
 
     // Compare password
     const isMatch = await bcrypt.compare(password, customer.password);
     if (!isMatch) {
+      const nowLocked = await recordFailedAttempt();
+      if (nowLocked) {
+        return res.status(429).json({
+          message: "Account locked for 15 minutes due to too many failed attempts.",
+        });
+      }
       return res.status(401).json({ message: "Invalid credentials." });
     }
+
+    // Successful login — clear fail counter
+    await redisClient.del(failKey);
 
     // Increment sessionVersion (invalidates all previous sessions for this user)
     const updatedCustomer = await customerModel.findByIdAndUpdate(
@@ -421,47 +467,143 @@ export const loginController = async (req, res) => {
       },
     };
 
-    // Sign the token
-    jwt.sign(
-      payload,
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || "7d" },
-      (err, token) => {
-        if (err) {
-          console.error("JWT Sign Error:", err);
-          return res.status(500).json({
-            message: "Server error during token generation.",
-            error: process.env.NODE_ENV === "development" ? err.message : undefined
-          });
-        }
+    // Sign access token (short-lived)
+    const accessToken = jwt.sign(payload, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN || "15m",
+    });
 
-        try {
-          const customerData = customer.toObject ? customer.toObject() : { ...customer._doc };
-          delete customerData.password;
+    // Sign refresh token (long-lived, separate secret)
+    const refreshPayload = { userId: String(customer._id), sessionVersion: newSessionVersion };
+    const refreshToken = jwt.sign(refreshPayload, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
+    });
 
-          console.log('[Login] Successful login:', customer.email);
+    // Store hashed refresh token in Redis
+    const hashedRefresh = crypto.createHash("sha256").update(refreshToken).digest("hex");
+    await redisClient.set(`refreshToken:${customer._id}`, hashedRefresh, { EX: 7 * 24 * 60 * 60 });
 
-          return res.status(200).json({
-            message: "Login successful!",
-            token,
-            customer: customerData,
-          });
-        } catch (dataError) {
-          console.error("Error processing customer data:", dataError);
-          return res.status(500).json({
-            message: "Server error during login.",
-            error: process.env.NODE_ENV === "development" ? dataError.message : undefined
-          });
-        }
-      }
-    );
+    const isProd = process.env.NODE_ENV === "production";
+    const cookieOpts = {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: isProd ? "None" : "Lax",
+    };
+
+    res.cookie("authToken", accessToken, { ...cookieOpts, maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.cookie("refreshToken", refreshToken, { ...cookieOpts, maxAge: 7 * 24 * 60 * 60 * 1000 });
+
+    const customerData = customer.toObject ? customer.toObject() : { ...customer._doc };
+    delete customerData.password;
+
+    console.log("[Login] Successful login:", customer.email);
+
+    return res.status(200).json({
+      message: "Login successful!",
+      customer: customerData,
+    });
   } catch (error) {
     console.error("Login Error:", error);
-    console.error("Error Stack:", error.stack);
     return res.status(500).json({
       message: "Server error during login.",
       error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
+  }
+};
+
+/* =========================
+   LOGOUT
+========================= */
+
+export const logoutController = async (req, res) => {
+  const isProd = process.env.NODE_ENV === "production";
+  const cookieOpts = { httpOnly: true, secure: isProd, sameSite: isProd ? "None" : "Lax" };
+
+  // Remove refresh token from Redis so it cannot be reused
+  if (req.customer?._id) {
+    await redisClient.del(`refreshToken:${req.customer._id}`);
+  }
+
+  res.clearCookie("authToken", cookieOpts);
+  res.clearCookie("refreshToken", cookieOpts);
+  return res.status(200).json({ message: "Logged out successfully." });
+};
+
+/* =========================
+   REFRESH TOKEN
+========================= */
+
+export const refreshController = async (req, res) => {
+  const refreshToken = req.cookies?.refreshToken;
+  if (!refreshToken) {
+    return res.status(401).json({ message: "No refresh token provided." });
+  }
+
+  const refreshSecret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+
+  try {
+    const decoded = jwt.verify(refreshToken, refreshSecret);
+    const { userId, sessionVersion } = decoded;
+
+    // Validate the hashed token stored in Redis
+    const stored = await redisClient.get(`refreshToken:${userId}`);
+    const incoming = crypto.createHash("sha256").update(refreshToken).digest("hex");
+    if (!stored || stored !== incoming) {
+      return res.status(401).json({ message: "Invalid refresh token." });
+    }
+
+    // Validate sessionVersion against DB
+    const customer = await customerModel.findById(userId).select("-password");
+    if (!customer) {
+      return res.status(401).json({ message: "User not found." });
+    }
+    if (customer.sessionVersion !== sessionVersion) {
+      return res.status(401).json({ message: "Session expired.", code: "SESSION_REPLACED" });
+    }
+
+    // Issue new access token with the same payload shape as login
+    const payload = {
+      customer: {
+        _id: customer._id,
+        email: customer.email,
+        phone: customer.phone,
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+        companyName: customer.companyName,
+        gstNumber: customer.gstNumber,
+        businessType: customer.businessType,
+        monthlyOrder: customer.monthlyOrder,
+        address: customer.address,
+        state: customer.state,
+        pincode: customer.pincode,
+        tokenAvailable: customer.tokenAvailable,
+        isSubscribed: customer.isSubscribed,
+        isTransporter: customer.isTransporter,
+        isAdmin: customer.isAdmin,
+        adminPermissions: customer.adminPermissions || {
+          formBuilder: true,
+          dashboard: false,
+          vendorApproval: false,
+          userManagement: false,
+        },
+        sessionVersion: customer.sessionVersion,
+      },
+    };
+
+    const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN || "15m",
+    });
+
+    const isProd = process.env.NODE_ENV === "production";
+    res.cookie("authToken", newAccessToken, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: isProd ? "None" : "Lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    return res.status(200).json({ message: "Token refreshed." });
+  } catch (error) {
+    return res.status(401).json({ message: "Invalid or expired refresh token." });
   }
 };
 
@@ -484,7 +626,7 @@ export const forgotPasswordController = async (req, res) => {
     });
 
     if (!customer) {
-      console.log(`[ForgotPassword] Attempt for non-existent email: ${email}`);
+      console.log('[ForgotPassword] Attempt for non-existent email — returning generic response');
       // Return success anyway for security (don't reveal if email exists)
       return res.status(200).json({
         success: true,
@@ -502,7 +644,7 @@ export const forgotPasswordController = async (req, res) => {
       strict: true,
     });
 
-    console.log(`[ForgotPassword] Generated new password for ${email}: ${newPassword}`);
+    console.log(`[ForgotPassword] Temporary password generated and will be sent to ${email}`);
 
     // Hash and save new password
     const salt = await bcrypt.genSalt(BCRYPT_SALT_ROUNDS);

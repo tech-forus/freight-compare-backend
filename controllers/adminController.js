@@ -45,7 +45,6 @@ export const addPincodeController = async (req, res) => {
 export const transporterPriceController = async (req, res) => {
   try {
     const data = req.body;
-    console.log("Received data:", data);
     const savedData = await new priceModel(data).save();
     if(!savedData) {
       return res.status(400).json({

@@ -2,6 +2,9 @@
 import express from "express";
 import morgan from "morgan";
 import cors from "cors";
+import helmet from "helmet";
+import cookieParser from "cookie-parser";
+import mongoSanitize from "express-mongo-sanitize";
 import dotenv from "dotenv";
 import v8 from "v8";
 import axios from "axios";
@@ -9,6 +12,7 @@ import { AsyncLocalStorage } from "async_hooks";
 import { monitorEventLoopDelay } from "perf_hooks";
 import { randomUUID } from "crypto";
 
+import { apiLimiter } from "./middleware/rateLimiter.js";
 import connectDatabase from "./db/db.js";
 import adminRoute from "./routes/adminRoute.js";
 import authRoute from "./routes/authRoute.js";
@@ -90,6 +94,18 @@ app.use((req, res, next) => {
 morgan.token("id", (req) => req.id || "-");
 app.use(morgan(":date[iso] :id :method :url :status :res[content-length] - :response-time ms"));
 
+// ─── HTTP SECURITY HEADERS ────────────────────────────────────────────────────
+// Provides: X-Content-Type-Options: nosniff, X-Frame-Options: SAMEORIGIN,
+//           X-XSS-Protection: 0, Referrer-Policy: no-referrer,
+//           Strict-Transport-Security (prod/HTTPS), X-DNS-Prefetch-Control: off
+app.use(
+  helmet({
+    contentSecurityPolicy: false,       // Pure JSON API — no HTML/scripts to protect
+    crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow Vercel → Railway API calls
+    crossOriginEmbedderPolicy: false,   // Not needed for API servers
+  })
+);
+
 // ────────────────────────────── CORS (with logs) ─────────────────────────────
 const STATIC_ALLOWED = [
   // Production
@@ -105,7 +121,14 @@ const STATIC_ALLOWED = [
 const EXTRA_ALLOWED = (process.env.CLIENT_ORIGINS || "")
   .split(",")
   .map((s) => s.trim())
-  .filter(Boolean);
+  .filter(Boolean)
+  .filter((origin) => {
+    if (process.env.NODE_ENV === "production" && origin.startsWith("http://")) {
+      console.warn(`[CORS] ⚠  Insecure http:// origin rejected in production: ${origin}`);
+      return false;
+    }
+    return true;
+  });
 const ALLOWED_ORIGINS = new Set([...STATIC_ALLOWED, ...EXTRA_ALLOWED]);
 app.use(
   cors({
@@ -128,8 +151,30 @@ app.use(
 // Trust proxy to get correct IP addresses (important for rate limiting)
 app.set('trust proxy', 1);
 
+// ─── HTTPS ENFORCEMENT (production only) ─────────────────────────────────────
+// Railway/Vercel terminate TLS at the load balancer and forward via x-forwarded-proto.
+// Redirect any plain HTTP request to the HTTPS equivalent.
+// Only active in production to keep localhost dev working.
+if (process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] !== 'https') {
+      return res.redirect(301, `https://${req.headers.host}${req.url}`);
+    }
+    next();
+  });
+}
+
+// Parse cookies (required for httpOnly cookie auth)
+app.use(cookieParser());
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+// ─── NOSQL INJECTION PROTECTION ──────────────────────────────────────────────
+// Must run AFTER express.json() so req.body is populated.
+// Strips keys starting with $ or containing . from req.body, req.query, req.params.
+// Prevents MongoDB operator injection (e.g. { "$gt": "" }, { "$regex": ".*" }).
+app.use(mongoSanitize());
 
 // Simple health checks
 app.get("/", (_req, res) => res.send("API is running"));
@@ -198,6 +243,12 @@ connectDatabase()
     console.error("⚠️ Database connection failed (UTSF mode still available):", err.message || err);
     console.log("📦 Server continuing in UTSF-only mode - MongoDB features will be unavailable");
   });
+
+// ─── GLOBAL API RATE LIMIT ───────────────────────────────────────────────────
+// 100 req / 15 min / IP across all /api/* routes.
+// Health endpoints (GET / and GET /health) are above this, so they are exempt.
+// Per-route limiters (authLimiter, calculatorRateLimiter) apply on top — they are stricter.
+app.use("/api", apiLimiter);
 
 // ───────────────────────────────── ROUTES ────────────────────────────────────
 // Log all transporter API calls

@@ -48,8 +48,7 @@ export const addTransporter = async (req, res) => {
       zones // should be JSON.stringify-ed array
     } = req.body;
 
-    console.log("Received body:", req.body);
-    console.log("Received file:", req.file); // from multer
+    console.log("[addTransporter] Request received — file:", req.file?.originalname || '(none)');
 
     if (!companyName || !phone || !email || !password || !gstNo || !address || !state || !pincode || !officeStart || !officeEnd) {
       return res.status(400).json({ success: false, message: 'Missing required fields' });

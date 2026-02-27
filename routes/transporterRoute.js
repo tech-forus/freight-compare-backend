@@ -51,12 +51,26 @@ import { uploadLimiter, apiLimiter, authLimiter, calculatorRateLimiter } from '.
 const router = express.Router();
 const storage = multer.memoryStorage();
 
+const excelFilter = (req, file, cb) => {
+  const allowed = [
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+    'application/vnd.ms-excel',                                           // .xls
+    'text/csv',                                                            // .csv
+  ];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only Excel (.xlsx, .xls) and CSV files are allowed.'), false);
+  }
+};
+
 export const upload = multer({
   storage,
+  fileFilter: excelFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024,      // 10MB for file uploads
-    fieldSize: 10 * 1024 * 1024,     // 10MB for JSON fields (serviceability array)
-    fields: 100                       // Allow many form fields
+    fileSize: 5 * 1024 * 1024,        // 5MB (reduced from 10MB)
+    fieldSize: 10 * 1024 * 1024,      // 10MB for JSON fields (serviceability array)
+    fields: 100                        // Allow many form fields
   }
 });
 

@@ -24,22 +24,27 @@ const storage = multer.diskStorage({
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    // Keep original filename or generate from transporter ID
-    cb(null, file.originalname);
+    // Sanitize filename to prevent path traversal attacks
+    const safe = file.originalname
+      .replace(/[/\\]/g, '')               // strip path separators
+      .replace(/[^a-zA-Z0-9._-]/g, '_');   // allow only safe characters
+    cb(null, `${Date.now()}_${safe}`);
   }
 });
 
 const upload = multer({
   storage,
   fileFilter: (req, file, cb) => {
-    if (file.originalname.endsWith('.utsf.json') || file.originalname.endsWith('.json')) {
+    const allowedMimes = ['application/json', 'text/plain'];
+    const allowedExt = file.originalname.endsWith('.utsf.json') || file.originalname.endsWith('.json');
+    if (allowedExt && allowedMimes.includes(file.mimetype)) {
       cb(null, true);
     } else {
       cb(new Error('Only .utsf.json or .json files are allowed'));
     }
   },
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB max
+    fileSize: 5 * 1024 * 1024 // 5MB max (reduced from 10MB)
   }
 });
 

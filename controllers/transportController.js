@@ -2299,12 +2299,6 @@ export const getAllTransporters = async (req, res) => {
 export const removeTiedUpVendor = async (req, res) => {
   try {
     // DEBUG LOG REMOVED
-    console.log("📦 req.body:", JSON.stringify(req.body, null, 2));
-    console.log("📥 req.params:", JSON.stringify(req.params, null, 2));
-    console.log("📤 req.query:", JSON.stringify(req.query, null, 2));
-    // DEBUG LOG REMOVED
-    // DEBUG LOG REMOVED
-    // DEBUG LOG REMOVED
     // Get data from body (preserve original extraction)
     let { customerID, companyName, vendorId } = req.body || {};
     // DEBUG LOG REMOVED
