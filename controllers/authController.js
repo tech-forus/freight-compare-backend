@@ -1,4 +1,4 @@
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import customerModel from "../model/customerModel.js";

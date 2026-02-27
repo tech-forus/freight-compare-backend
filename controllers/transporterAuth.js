@@ -2,7 +2,7 @@ import priceModel from "../model/priceModel.js";
 import transporterModel from "../model/transporterModel.js";
 import xlsx from "xlsx";
 import path from 'path';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
