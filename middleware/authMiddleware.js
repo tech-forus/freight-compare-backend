@@ -6,8 +6,13 @@ export const protect = async (req, res, next) => {
   let token;
 
   // 1️⃣ Try Authorization header: "Bearer <token>"
+  //    Skip empty / literal "undefined" values — these come from legacy frontend
+  //    code that calls Cookies.get('authToken') on the now-httpOnly cookie.
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    token = req.headers.authorization.split(' ')[1];
+    const candidate = req.headers.authorization.split(' ')[1];
+    if (candidate && candidate !== 'undefined' && candidate !== 'null' && candidate.length > 10) {
+      token = candidate;
+    }
   }
 
   // 2️⃣ If no token yet, try cookies: authToken=<token>

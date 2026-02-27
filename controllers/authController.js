@@ -518,8 +518,22 @@ export const logoutController = async (req, res) => {
   const isProd = process.env.NODE_ENV === "production";
   const cookieOpts = { httpOnly: true, secure: isProd, sameSite: isProd ? "None" : "Lax" };
 
-  // Remove refresh token from Redis so it cannot be reused
-  if (req.customer?._id) {
+  // Remove refresh token from Redis so it cannot be reused.
+  // Read userId from the refreshToken cookie directly — this works even when the
+  // access token has expired or SESSION_REPLACED (logout is now unprotected).
+  const refreshToken = req.cookies?.refreshToken;
+  if (refreshToken) {
+    try {
+      const refreshSecret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+      const decoded = jwt.verify(refreshToken, refreshSecret);
+      if (decoded?.userId) {
+        await redisClient.del(`refreshToken:${decoded.userId}`);
+      }
+    } catch (_) {
+      // Expired or invalid refresh token — still clear the cookies below
+    }
+  } else if (req.customer?._id) {
+    // Fallback: protect middleware set req.customer (called with a valid access token)
     await redisClient.del(`refreshToken:${req.customer._id}`);
   }
 

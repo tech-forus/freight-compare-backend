@@ -21,8 +21,8 @@ router.post('/refresh', apiLimiter, refreshController);
 
 // @route   POST api/auth/logout
 // @desc    Clear auth cookies and invalidate refresh token
-// @access  Private
-router.post('/logout', protect, logoutController);
+// @access  Public (reads refreshToken cookie directly, no auth needed)
+router.post('/logout', logoutController);
 
 // @route   GET api/auth/me
 // @desc    Get current user with fresh permissions (for page refresh)
