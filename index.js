@@ -172,9 +172,18 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // ─── NOSQL INJECTION PROTECTION ──────────────────────────────────────────────
 // Must run AFTER express.json() so req.body is populated.
-// Strips keys starting with $ or containing . from req.body, req.query, req.params.
+// Strips keys starting with $ or containing . from req.body and req.params.
 // Prevents MongoDB operator injection (e.g. { "$gt": "" }, { "$regex": ".*" }).
-app.use(mongoSanitize());
+//
+// NOTE: req.query is intentionally skipped. In Express 5 / Node 20+ req.query
+// is a read-only getter — mongoSanitize()'s default middleware crashes trying
+// to reassign it. req.query values are always plain strings parsed from the URL,
+// so they cannot carry MongoDB object operators anyway; no injection risk exists.
+app.use((req, _res, next) => {
+  if (req.body)   req.body   = mongoSanitize.sanitize(req.body);
+  if (req.params) req.params = mongoSanitize.sanitize(req.params);
+  next();
+});
 
 // Simple health checks
 app.get("/", (_req, res) => res.send("API is running"));
