@@ -15,8 +15,8 @@
     "city": null,
     "pincode": "",
     "rating": 4,
-    "isVerified": false,
-    "approvalStatus": "pending",
+    "isVerified": true,
+    "approvalStatus": "approved",
     "createdAt": "2026-02-03T09:51:58.065113Z",
     "updatedAt": "2026-02-19T12:44:00.510Z",
     "created": {
