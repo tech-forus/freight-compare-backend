@@ -355,7 +355,8 @@ export const verifyOtpsAndSignup = async (req, res) => {
 ========================= */
 
 export const loginController = async (req, res) => {
-  const { email, password } = req.body;
+  // Guard: req.body may be undefined when no Content-Type header is sent
+  const { email, password } = req.body || {};
 
   // Basic validation
   if (!email || !password) {
@@ -364,6 +365,11 @@ export const loginController = async (req, res) => {
       .json({ message: "Please provide email and password." });
   }
   if (typeof email !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ message: "Invalid input format." });
+  }
+  // Reject absurdly long inputs before they reach bcrypt or MongoDB
+  // (email: RFC 5321 max 320 chars, password: 1 KB is more than enough)
+  if (email.length > 320 || password.length > 1024) {
     return res.status(400).json({ message: "Invalid input format." });
   }
 

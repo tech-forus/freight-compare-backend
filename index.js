@@ -180,8 +180,12 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 // to reassign it. req.query values are always plain strings parsed from the URL,
 // so they cannot carry MongoDB object operators anyway; no injection risk exists.
 app.use((req, _res, next) => {
-  if (req.body)   req.body   = mongoSanitize.sanitize(req.body);
-  if (req.params) req.params = mongoSanitize.sanitize(req.params);
+  // Only sanitize plain objects — mongoSanitize.sanitize() throws on strings/arrays.
+  // req.query is skipped: it is always plain strings (URL params can't carry operators).
+  if (req.body   && typeof req.body   === 'object' && !Array.isArray(req.body))
+    req.body   = mongoSanitize.sanitize(req.body);
+  if (req.params && typeof req.params === 'object' && !Array.isArray(req.params))
+    req.params = mongoSanitize.sanitize(req.params);
   next();
 });
 
@@ -308,6 +312,26 @@ app.post("/upload", async (req, res) => {
 
 // Global error handler (ensures stack traces are logged once)
 app.use((err, req, res, _next) => {
+  // JSON body parse failure (express.json() or body-parser) → 400, not 500
+  if (err.type === 'entity.parse.failed' || err.status === 400) {
+    return res.status(400).json({ message: 'Invalid request body.' });
+  }
+  // CORS rejection → 403
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({ message: 'CORS: origin not allowed.' });
+  }
+  // Multer file size limit exceeded → 413
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ success: false, message: 'File too large. Maximum allowed size exceeded.' });
+  }
+  // Multer fileFilter rejection (wrong MIME type / extension) → 400
+  if (err.name === 'MulterError' || (err.message && (
+    err.message.includes('Only Excel') ||
+    err.message.includes('Only .utsf') ||
+    err.message.includes('files are allowed')
+  ))) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
   console.error(`[${req?.id || "-"}] Unhandled error:`, err && err.stack ? err.stack : err);
   if (!res.headersSent) {
     res.status(500).json({ success: false, error: "Internal Server Error" });
