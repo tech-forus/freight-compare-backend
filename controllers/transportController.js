@@ -1567,6 +1567,9 @@ export const addTiedUpCompany = async (req, res) => {
       isDraft, // ✅ Received from frontend
     } = req.body;
 
+    // Parse isDraft from FormData (comes as string 'true'/'false')
+    const isDraftMode = isDraft === true || isDraft === 'true';
+
     // Debug: Log received values to verify they're coming through
     console.log('📥 Received vendor data:', {
       companyName,
@@ -1683,15 +1686,13 @@ export const addTiedUpCompany = async (req, res) => {
     const hasPriceChart = priceChart && typeof priceChart === 'object' && Object.keys(priceChart).length > 0;
 
     // Basic required field validation
-    // ✅ DRAFT MODE: Skip strict validation
-    if (isDraft) {
-      if (!customerID || !companyName) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "customerID and companyName are required even for drafts",
-        });
+    // ✅ DRAFT MODE: Skip ALL validation — save whatever the user has
+    if (isDraftMode) {
+      // For drafts, infer customerID from the authenticated user if not provided
+      if (!customerID && req.user) {
+        customerID = req.user.customer?._id?.toString() || req.user._id?.toString() || '';
       }
+      // No other checks — user wants zero constraints for drafts
     } else {
       if (
         !customerID ||
@@ -1724,8 +1725,8 @@ export const addTiedUpCompany = async (req, res) => {
       }
     }
 
-    // Enhanced companyName validation
-    if (!companyName || typeof companyName !== 'string' || companyName.trim().length < 2) {
+    // Enhanced companyName validation (skip for drafts)
+    if (!isDraftMode && (!companyName || typeof companyName !== 'string' || companyName.trim().length < 2)) {
       return res.status(400).json({
         success: false,
         message: "Company name must be at least 2 characters",
@@ -1736,7 +1737,7 @@ export const addTiedUpCompany = async (req, res) => {
     const validationErrors = [];
 
     // ✅ DRAFT MODE: Skip detailed validation checks
-    if (!isDraft) {
+    if (!isDraftMode) {
       if (!validateEmail(vendorEmail)) {
         validationErrors.push("Invalid email format");
       }
@@ -1871,7 +1872,7 @@ export const addTiedUpCompany = async (req, res) => {
       pincode: Number(pincode),
       rating: Number(rating) || 3,
       // APPROVAL STATUS: Drafts are 'draft', others 'approved'
-      approvalStatus: isDraft ? 'draft' : 'approved',
+      approvalStatus: isDraftMode ? 'draft' : 'approved',
       // NEW: Individual vendor rating parameters
       vendorRatings: vendorRatings || {
         priceSupport: 0,
@@ -1901,7 +1902,7 @@ export const addTiedUpCompany = async (req, res) => {
         priceChart: priceChart || {},
       },
       invoiceValueCharges: finalInvoiceValueCharges,
-    }).save({ validateBeforeSave: !isDraft });
+    }).save({ validateBeforeSave: !isDraftMode });
 
     if (tempData) {
       return res.status(201).json({
@@ -1952,9 +1953,10 @@ export const getTemporaryTransporters = async (req, res) => {
     // DEBUG LOG REMOVED
     // If no customerID, return all temporary transporters (for super admin)
     const baseQuery = customerID ? { customerID: customerID } : {};
-    // Filter out test/dummy transporters
+    // Filter out test/dummy transporters AND drafts (drafts should not appear in My Vendors)
     const query = {
       ...baseQuery,
+      approvalStatus: { $ne: 'draft' },
       companyName: {
         $not: {
           $regex: /test|tester|dummy|vellore/i
@@ -3162,17 +3164,30 @@ export const searchTransporters = async (req, res) => {
       ? { $and: [{ $or: searchOr }, { customerID: customerID }, excludeTestNames, approvedOnly] }
       : { $and: [{ $or: searchOr }, excludeTestNames, approvedOnly] };
 
-    // Search both collections
+    // =========================================================================================
+    // 🚀 CRITICAL PERFORMANCE NOTE (DO NOT REMOVE) 🚀
+    // =========================================================================================
+    // Do NOT add `serviceability`, `zoneConfig`, or `service` to these `.select()` queries.
+    // Some vendors have 30,000+ pincodes. If you fetch the full serviceability array for 
+    // 10 search results, MongoDB will load 300,000 objects into memory, and Node.js will 
+    // serialize a multi-megabyte JSON response. 
+    // 
+    // This causes the "Quick Lookup" search dropdown to hang for 10+ seconds.
+    // The frontend dropdown only needs `companyName`, `vendorCode`, and zone counts.
+    // The full serviceability array is fetched separately via `/search-transporters/:id`.
+    // =========================================================================================
     const [publicTransporters, tempTransporters] = await Promise.all([
       transporterModel
         .find({ $and: [{ $or: searchOr }, excludeTestNames, approvedOnly] })
-        .select('companyName displayName vendorCode vendorPhone vendorEmail gstNo address state city pincode rating selectedZones serviceZones serviceableZones servicableZones zoneConfig service approvalStatus')
+        // OPTIMIZED: only select exactly what the frontend dropdown uses
+        .select('companyName displayName vendorCode vendorEmail isVerified approvalStatus serviceZones serviceableZones servicableZones selectedZones')
         .limit(limitNum)
         .lean(),
 
       temporaryTransporterModel
         .find(tempQuery)
-        .select('companyName contactPersonName displayName vendorCode vendorPhone vendorEmail gstNo subVendor address state city pincode transportMode serviceMode volumetricUnit cftFactor rating selectedZones zoneConfig zoneConfigurations approvalStatus prices serviceability serviceabilityChecksum serviceabilitySource')
+        // OPTIMIZED: only select exactly what the frontend dropdown uses
+        .select('companyName legalCompanyName displayName vendorCode vendorEmail isVerified approvalStatus selectedZones')
         .limit(limitNum)
         .lean()
     ]);
@@ -3249,19 +3264,8 @@ export const searchTransporters = async (req, res) => {
       const zoneConfigKeys = Object.keys(t.zoneConfig || {});
       const finalZones = zones.length > 0 ? zones : zoneConfigKeys;
 
-      // FIX: Send service array for smart enrichment on frontend
-      const serviceability = (t.service || []).map(s => {
-        if (typeof s === 'string') {
-          return { pincode: s, zone: '', state: '', city: '', isODA: false };
-        }
-        return {
-          pincode: String(s.pincode || s.Pincode || ''),
-          zone: String(s.zone || s.Zone || '').toUpperCase(),
-          state: s.state || s.State || '',
-          city: s.city || s.City || '',
-          isODA: s.isODA || s.IsODA || false,
-        };
-      });
+      // OPTIMIZED: DO NOT map or send the massive serviceability array here.
+      // The frontend Quick Lookup dropdown doesn't use it, and generating/sending it causes ~10s lag.
 
       results.push({
         id: t._id?.toString(),
@@ -3294,8 +3298,9 @@ export const searchTransporters = async (req, res) => {
           selectedCities: [],
           isComplete: false
         })),
-        // CRITICAL: Send serviceability for smart enrichment
-        serviceability: serviceability,
+        // CRITICAL PERFORMANCE FIX: DO NOT send full serviceability payload here.
+        // It's sent only in /search-transporters/:id when actively selected.
+        serviceability: [],
         serviceabilityCount: t.service?.length || 0,
         hasRichPincodeData: (t.service?.length || 0) >= 50,
       });
@@ -3306,21 +3311,15 @@ export const searchTransporters = async (req, res) => {
       // LOG 4: Each temp transporter
       console.log(`[SEARCH-${reqId}] [TEMP-${idx}] ${t.companyName} | zones: ${t.selectedZones?.length || 0} | serviceability: ${t.serviceability?.length || 0} | priceChart: ${Object.keys(t.prices?.priceChart || {}).length}`);
 
-      // Build zoneConfigs from various sources
+      // Build zoneConfigs from minimal fields (heavy zone objects excluded for performance)
       let zoneConfigs = [];
-      if (t.zoneConfigurations?.length > 0) {
-        zoneConfigs = t.zoneConfigurations;
-      } else if (t.zoneConfig) {
-        const zc = t.zoneConfig instanceof Map ? Object.fromEntries(t.zoneConfig) : t.zoneConfig;
-        zoneConfigs = Object.keys(zc).map(z => ({
-          zoneCode: z,
-          zoneName: z,
-          region: z.startsWith('NE') ? 'Northeast' : z.startsWith('N') ? 'North' : z.startsWith('S') ? 'South' : z.startsWith('E') ? 'East' : z.startsWith('W') ? 'West' : z.startsWith('X') ? 'Special' : z.startsWith('C') ? 'Central' : 'North',
-          selectedStates: [],
-          selectedCities: [],
-          isComplete: false
-        }));
-      }
+      const zones = t.selectedZones || [];
+      zoneConfigs = zones.map(z => ({
+        zoneCode: String(z),
+        zoneName: String(z),
+        region: 'Undefined',
+        isComplete: false
+      }));
 
       results.push({
         id: t._id?.toString(),
@@ -3354,9 +3353,10 @@ export const searchTransporters = async (req, res) => {
         },
         priceChart: t.prices?.priceChart || {},
         invoiceValueCharges: t.prices?.invoiceValueCharges || {},
-        serviceability: t.serviceability || [],
-        serviceabilityChecksum: t.serviceabilityChecksum || '',
-        serviceabilitySource: t.serviceabilitySource || '',
+        // OPTIMIZED: Removed massive serviceability arrays which cause 10s latency
+        serviceability: [],
+        serviceabilityChecksum: '',
+        serviceabilitySource: '',
       });
     });
 
