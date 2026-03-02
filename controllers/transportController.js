@@ -3417,19 +3417,27 @@ export const getSearchTransporterDetail = async (req, res) => {
       const t = utsfService.getTransporterById ? utsfService.getTransporterById(id) : null;
       if (t) {
         const zoneKeys = Object.keys(t.serviceability || {});
-        // Build serviceability array from UTSF
+        // Build serviceability array from UTSF using pre-expanded _zoneServedPincodes.
+        // The raw t.serviceability stores zone coverage *definitions* (ranges/modes), not flat pincode arrays.
+        // The UTSFTransporter constructor already expands those ranges into _zoneServedPincodes[zone] Sets.
+        // We cap at 500 per zone to keep response size reasonable; the frontend enriches city/state
+        // from pincodes.json when city is missing.
         const serviceabilityArr = [];
-        for (const [zone, pincodes] of Object.entries(t.serviceability || {})) {
-          if (Array.isArray(pincodes)) {
-            pincodes.forEach(p => {
+        const PINCODES_PER_ZONE_CAP = 500;
+        for (const [zone, pincodeSet] of Object.entries(t._zoneServedPincodes || {})) {
+          if (pincodeSet instanceof Set) {
+            let count = 0;
+            for (const pincode of pincodeSet) {
+              if (count >= PINCODES_PER_ZONE_CAP) break;
               serviceabilityArr.push({
-                pincode: typeof p === 'object' ? String(p.pincode || '') : String(p),
+                pincode: String(pincode),
                 zone,
-                state: typeof p === 'object' ? (p.state || '') : '',
-                city: typeof p === 'object' ? (p.city || '') : '',
-                isODA: typeof p === 'object' ? (p.isODA || false) : false,
+                state: '',
+                city: '',
+                isODA: t._odaPincodes?.has(pincode) || false,
               });
-            });
+              count++;
+            }
           }
         }
         vendor = {
