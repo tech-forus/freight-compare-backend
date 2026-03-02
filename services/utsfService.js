@@ -563,7 +563,25 @@ class UTSFTransporter {
       invoiceValueCharges = Math.max((percentage / 100) * invoiceValue, minAmount);
     }
 
-
+    // Custom surcharges (carrier-specific: IDC, CAF, reattempt, etc.)
+    const _standardSub = effectiveBaseFreight + docketCharge + greenTax + daccCharges
+      + miscCharges + fuelCharges + rovCharges + insuaranceCharges + odaCharges
+      + handlingCharges + fmCharges + appointmentCharges + invoiceValueCharges;
+    const _customSurcharges = (pr.surcharges || [])
+      .filter(s => s && s.enabled !== false)
+      .sort((a, b) => (a.order || 99) - (b.order || 99))
+      .reduce((acc, s) => {
+        const v  = Number(s.value)  || 0;
+        const v2 = Number(s.value2) || 0;
+        switch (s.formula) {
+          case 'PCT_OF_BASE':     return acc + (v / 100) * baseFreight;
+          case 'PCT_OF_SUBTOTAL': return acc + (v / 100) * _standardSub;
+          case 'FLAT':            return acc + v;
+          case 'PER_KG':          return acc + v * chargeableWeight;
+          case 'MAX_FLAT_PKG':    return acc + Math.max(v, v2 * chargeableWeight);
+          default:                return acc;
+        }
+      }, 0);
 
     // Total (lines 828-841)
     let totalChargesBeforeAddon =
@@ -579,7 +597,8 @@ class UTSFTransporter {
       handlingCharges +
       fmCharges +
       appointmentCharges +
-      invoiceValueCharges;
+      invoiceValueCharges +
+      _customSurcharges;
 
     // Apply minimum total charges if configured (e.g., DB Schenker 400 INR is total floor)
     // This uses the minBaseFreight key if minApplyToTotal is true, OR an explicit minTotalCharges key
@@ -845,6 +864,50 @@ class UTSFService {
       return true;
     } catch (err) {
       console.error(`[UTSF] Error reloading ${id}:`, err.message);
+      return false;
+    }
+  }
+
+  /**
+   * Load a single transporter from MongoDB by ID and inject into memory.
+   * Removes any existing in-memory version first to avoid duplicates.
+   * Use this after saving/updating a Mongo doc to keep memory in sync.
+   */
+  async loadSingleFromMongo(transporterId) {
+    try {
+      console.log(`[UTSF] loadSingleFromMongo: Looking up "${transporterId}" in MongoDB...`);
+      const UTSFModel = (await import('../model/utsfModel.js')).default;
+      const doc = await UTSFModel.findByTransporterId(transporterId);
+
+      if (!doc) {
+        console.warn(`[UTSF] loadSingleFromMongo: No MongoDB doc found for id="${transporterId}"`);
+        return false;
+      }
+
+      const utsfData = doc.toUTSF();
+
+      // Remove stale in-memory entry to avoid duplicates
+      if (this.transporters.has(transporterId)) {
+        this.transporters.delete(transporterId);
+        console.log(`[UTSF] loadSingleFromMongo: Removed stale in-memory entry for "${transporterId}"`);
+      }
+
+      // Ensure master pincodes are loaded before building indexes
+      if (Object.keys(this.masterPincodes).length === 0) {
+        const pincodesPath = path.resolve(__dirname, '../data/pincodes.json');
+        if (fs.existsSync(pincodesPath)) {
+          this.loadMasterPincodes(pincodesPath);
+          console.log(`[UTSF] loadSingleFromMongo: Loaded master pincodes for index building`);
+        } else {
+          console.warn(`[UTSF] loadSingleFromMongo: Master pincodes file not found — transporter indexes may be incomplete`);
+        }
+      }
+
+      const transporter = this.addTransporter(utsfData);
+      console.log(`[UTSF] loadSingleFromMongo: ✅ "${transporter.companyName}" (${transporterId}) is now active in memory (${transporter._servedPincodes?.size || 0} pincodes)`);
+      return true;
+    } catch (err) {
+      console.error(`[UTSF] loadSingleFromMongo: ❌ Error for "${transporterId}":`, err.message);
       return false;
     }
   }

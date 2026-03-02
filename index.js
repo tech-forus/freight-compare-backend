@@ -25,6 +25,8 @@ import vendorRoute from "./routes/vendorRoute.js";
 import freightRateRoute from "./routes/freightRateRoute.js";
 // Wheelseye Pricing routes
 import wheelseyePricingRoute from "./routes/wheelseyePricingRoute.js";
+// IndiaPost Pricing routes
+import indiaPostPricingRoute from "./routes/indiaPostPricingRoute.js";
 // ODA routes
 import odaRoute from "./routes/odaRoute.js";
 // ✅ NEW: Invoice charges routes (import at top)
@@ -111,6 +113,7 @@ const STATIC_ALLOWED = [
   // Production
   "https://freight-compare-frontend.vercel.app",
   "https://transporter-signup.netlify.app",
+  "https://frontend-six-gamma-72.vercel.app",
 
   // Development - keep these for local testing
   "http://localhost:3000",
@@ -273,6 +276,7 @@ app.use("/api/bidding", biddingRoute);
 app.use("/api/vendor", vendorRoute);
 app.use("/api/freight-rate", freightRateRoute);
 app.use("/api/wheelseye", wheelseyePricingRoute);
+app.use("/api/indiapost", indiaPostPricingRoute);
 app.use("/api/oda", odaRoute);
 
 // <-- DEV STUBS: add profile + dashboard endpoints (ensure these files exist)
@@ -345,8 +349,9 @@ const server = app.listen(PORT, () => {
   console.log("  - POST /api/vendor/wheelseye-pricing");
   console.log("  - POST /api/vendor/wheelseye-distance");
   console.log("  - GET  /api/wheelseye/pricing");
-  console.log("  - PATCH /api/transporters/:id/invoice-charges"); // ✅ NEW
-  console.log("  - GET  /api/transporters/:id/invoice-charges"); // ✅ NEW
+  console.log("  - GET  /api/indiapost/pricing");
+  console.log("  - PATCH /api/transporters/:id/invoice-charges");
+  console.log("  - GET  /api/transporters/:id/invoice-charges");
   console.log(`==> Available at your primary URL after boot`);
 });
 

@@ -229,7 +229,33 @@ function clampNumber(v, min, max) {
  * Logic: MAX( (InvoiceValue * Percentage / 100), MinimumAmount )
  */
 
-
+/**
+ * Compute the total of all custom/carrier-specific surcharges.
+ * Formula types:
+ *   PCT_OF_BASE      – (value/100) × baseFreight
+ *   PCT_OF_SUBTOTAL  – (value/100) × standardSubtotal
+ *   FLAT             – fixed ₹ per shipment
+ *   PER_KG           – value × chargeableWeight
+ *   MAX_FLAT_PKG     – max(value, value2 × chargeableWeight)
+ */
+function computeCustomSurcharges(surcharges, baseFreight, chargeableWeight, standardSubtotal) {
+  if (!surcharges || !surcharges.length) return 0;
+  return surcharges
+    .filter(s => s && s.enabled !== false)
+    .sort((a, b) => (a.order || 99) - (b.order || 99))
+    .reduce((acc, s) => {
+      const v = Number(s.value) || 0;
+      const v2 = Number(s.value2) || 0;
+      switch (s.formula) {
+        case 'PCT_OF_BASE': return acc + (v / 100) * baseFreight;
+        case 'PCT_OF_SUBTOTAL': return acc + (v / 100) * standardSubtotal;
+        case 'FLAT': return acc + v;
+        case 'PER_KG': return acc + v * chargeableWeight;
+        case 'MAX_FLAT_PKG': return acc + Math.max(v, v2 * chargeableWeight);
+        default: return acc;
+      }
+    }, 0);
+}
 
 function calculateInvoiceValueCharge(invoiceValue, invoiceValueCharges) {
   // If not enabled or no invoice value, return 0
@@ -855,7 +881,7 @@ export const calculatePrice = async (req, res) => {
             // effectiveBaseFreight ensures freight is never below minimum
             const effectiveBaseFreight = Math.max(baseFreight, minCharges);
 
-            const totalChargesBeforeAddon =
+            const _standardSubtotal1 =
               effectiveBaseFreight +
               docketCharge +
               greenTax +
@@ -868,6 +894,9 @@ export const calculatePrice = async (req, res) => {
               handlingCharges +
               fmCharges +
               appointmentCharges;
+            const totalChargesBeforeAddon =
+              _standardSubtotal1 +
+              computeCustomSurcharges(pr.surcharges, baseFreight, chargeableWeight, _standardSubtotal1);
 
             // 🔍 DEBUG: Log CALCULATED values for "Add Jan"
             // PERFORMANCE: Only log when ENABLE_VENDOR_DEBUG_LOGGING is true (disabled in production)
@@ -1142,7 +1171,7 @@ export const calculatePrice = async (req, res) => {
             // effectiveBaseFreight ensures freight is never below minimum
             const effectiveBaseFreight = Math.max(baseFreight, minCharges);
 
-            const totalChargesBeforeAddon =
+            const _standardSubtotal2 =
               effectiveBaseFreight +
               docketCharge +
               greenTax +
@@ -1155,6 +1184,9 @@ export const calculatePrice = async (req, res) => {
               handlingCharges +
               fmCharges +
               appointmentCharges;
+            const totalChargesBeforeAddon =
+              _standardSubtotal2 +
+              computeCustomSurcharges(pr.surcharges, baseFreight, chargeableWeight, _standardSubtotal2);
 
             // PERF: Removed verbose per-vendor success logging
 
@@ -3149,20 +3181,19 @@ export const searchTransporters = async (req, res) => {
     // UTSF MERGE & HOT-SWITCH
     // =========================================================
     const utsfResults = [];
-    if (customerID) {
-      const allUtsf = utsfService.getTransportersByCustomerId(customerID);
+    const allUtsf = utsfService.getAllTransporters();
 
-      // Filter by search query and approval status (only approved vendors)
-      for (const t of allUtsf) {
-        const utsfApproval = t.data.meta?.approvalStatus || 'pending';
-        if (utsfApproval !== 'approved') continue;
-        if (
-          searchRegex.test(t.companyName) ||
-          (t.vendorCode && searchRegex.test(t.vendorCode)) ||
-          (t.data.meta.email && searchRegex.test(t.data.meta.email))
-        ) {
-          utsfResults.push(t);
-        }
+    // Filter by search query and approval status (only approved vendors)
+    for (const t of allUtsf) {
+      const utsfApproval = t.data.meta?.approvalStatus || 'pending';
+      if (utsfApproval !== 'approved') continue;
+      if (
+        searchRegex.test(t.companyName) ||
+        (t.vendorCode && searchRegex.test(t.vendorCode)) ||
+        (t.data.meta?.email && searchRegex.test(t.data.meta.email)) ||
+        (t.data.meta?.contactPersonName && searchRegex.test(t.data.meta.contactPersonName))
+      ) {
+        utsfResults.push(t);
       }
     }
 
@@ -3382,7 +3413,7 @@ export const getSearchTransporterDetail = async (req, res) => {
     let vendor = null;
 
     // UTSF source
-    if (source === 'utsf' && customerID) {
+    if (source === 'utsf') {
       const t = utsfService.getTransporterById ? utsfService.getTransporterById(id) : null;
       if (t) {
         const zoneKeys = Object.keys(t.serviceability || {});
@@ -3428,6 +3459,16 @@ export const getSearchTransporterDetail = async (req, res) => {
             selectedStates: [], selectedCities: [], isComplete: true,
           })),
           serviceability: serviceabilityArr,
+          volumetricUnit: t.data?.pricing?.priceRate?.volumetricUnit || 'cm',
+          cftFactor: t.data?.pricing?.priceRate?.cftFactor || null,
+          charges: {
+            ...(t.data?.pricing?.priceRate || {}),
+            divisor: t.data?.pricing?.priceRate?.divisor || 5000,
+          },
+          priceChart: t.data?.pricing?.zoneRates || {},
+          invoiceValueCharges: t.data?.pricing?.priceRate?.invoiceValueCharges || {},
+          serviceabilityChecksum: t.data?.meta?.serviceabilityChecksum || '',
+          serviceabilitySource: 'utsf',
         };
       }
     }
