@@ -1,6 +1,8 @@
 // middleware/authMiddleware.js
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import customerModel from '../model/customerModel.js';
+import redisClient from '../utils/redisClient.js';
 
 export const protect = async (req, res, next) => {
   let token;
@@ -107,9 +109,72 @@ export const protect = async (req, res, next) => {
     }
 
     if (error.name === 'TokenExpiredError') {
+      // Silent refresh: try the refreshToken cookie before returning 401.
+      // This covers every protected route — the frontend never has to implement
+      // a retry loop; the new authToken cookie is set transparently.
+      const refreshToken = req.cookies?.refreshToken;
+      if (refreshToken) {
+        try {
+          const refreshSecret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+          const refreshDecoded = jwt.verify(refreshToken, refreshSecret);
+          const { userId, sessionVersion } = refreshDecoded;
+
+          // Validate hashed refresh token stored in Redis
+          const stored = await redisClient.get(`refreshToken:${userId}`);
+          const incoming = crypto.createHash('sha256').update(refreshToken).digest('hex');
+          if (stored && stored === incoming) {
+            const customer = await customerModel.findById(userId).select('-password');
+            if (customer && customer.sessionVersion === sessionVersion) {
+              // Issue a new short-lived access token
+              const payload = {
+                customer: {
+                  _id: customer._id,
+                  email: customer.email,
+                  phone: customer.phone,
+                  firstName: customer.firstName,
+                  lastName: customer.lastName,
+                  companyName: customer.companyName,
+                  gstNumber: customer.gstNumber,
+                  businessType: customer.businessType,
+                  monthlyOrder: customer.monthlyOrder,
+                  address: customer.address,
+                  state: customer.state,
+                  pincode: customer.pincode,
+                  tokenAvailable: customer.tokenAvailable,
+                  isSubscribed: customer.isSubscribed,
+                  isTransporter: customer.isTransporter,
+                  isAdmin: customer.isAdmin,
+                  adminPermissions: customer.adminPermissions || {
+                    formBuilder: true, dashboard: false,
+                    vendorApproval: false, userManagement: false,
+                  },
+                  sessionVersion: customer.sessionVersion,
+                },
+              };
+              const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, {
+                expiresIn: process.env.JWT_EXPIRES_IN || '15m',
+              });
+              const isProd = process.env.NODE_ENV === 'production';
+              res.cookie('authToken', newAccessToken, {
+                httpOnly: true,
+                secure: isProd,
+                sameSite: isProd ? 'None' : 'Lax',
+                maxAge: 7 * 24 * 60 * 60 * 1000,
+              });
+              req.customer = customer;
+              req.user = customer;
+              console.log(`[protect] Silent refresh for ${customer.email} — new authToken issued`);
+              return next();
+            }
+          }
+        } catch (_) {
+          // Refresh token also expired or invalid — fall through to 401
+        }
+      }
       return res.status(401).json({
         success: false,
         message: 'Not authorized, token has expired',
+        code: 'TOKEN_EXPIRED',
       });
     }
 
