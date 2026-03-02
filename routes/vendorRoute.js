@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import WheelseyePricing from '../model/wheelseyePricingModel.js';
+import IndiaPostPricing from '../model/indiaPostPricingModel.js';
 import { calculateChargeableWeight, validateShipmentDetails } from '../utils/chargeableWeightService.js';
 import { calculateDistanceBetweenPincode } from '../utils/distanceService.js';
 dotenv.config();
@@ -190,7 +191,7 @@ router.post("/wheelseye-pricing", async (req, res) => {
     // If shipment_details provided, calculate chargeable weight in backend
     if (shipment_details && Array.isArray(shipment_details) && shipment_details.length > 0) {
       console.log('📦 Calculating chargeable weight from shipment details');
-      
+
       if (!validateShipmentDetails(shipment_details)) {
         return res.status(400).json({
           success: false,
@@ -200,7 +201,7 @@ router.post("/wheelseye-pricing", async (req, res) => {
 
       weightBreakdown = calculateChargeableWeight(shipment_details);
       chargeableWeight = weightBreakdown.chargeableWeight;
-      
+
       console.log('⚖️ Weight breakdown:', {
         actual: weightBreakdown.actualWeight,
         volumetric: weightBreakdown.volumetricWeight,
@@ -295,6 +296,53 @@ router.post("/wheelseye-distance", async (req, res) => {
     // Generic error
     console.error("Distance calculation error:", error.message);
     res.status(500).json({ error: "Distance calculation failed" });
+  }
+});
+
+router.post("/indiapost-pricing", async (req, res) => {
+  try {
+    const { weight, distance, shipment_details, origin, destination } = req.body;
+
+    let chargeableWeight = weight;
+    if (shipment_details?.length) {
+      const wb = calculateChargeableWeight(shipment_details);
+      chargeableWeight = wb.chargeableWeight;
+    }
+
+    if (!chargeableWeight || !distance) {
+      return res.status(400).json({ success: false, message: 'weight and distance required' });
+    }
+
+    const weightNum = parseFloat(chargeableWeight);
+    const distanceNum = parseFloat(distance);
+
+    if (isNaN(weightNum) || isNaN(distanceNum)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Weight and distance must be valid numbers'
+      });
+    }
+
+    if (weightNum <= 0 || distanceNum <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Weight and distance must be greater than 0'
+      });
+    }
+
+    const pricing = await IndiaPostPricing.findPricing(weightNum, distanceNum);
+
+    res.json({
+      success: true,
+      data: pricing
+    });
+
+  } catch (error) {
+    console.error('Error getting IndiaPost pricing:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error'
+    });
   }
 });
 

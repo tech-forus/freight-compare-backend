@@ -112,6 +112,7 @@ app.use(
 const STATIC_ALLOWED = [
   // Production
   "https://freight-compare-frontend.vercel.app",
+  "https://YOUR-NEW-MERGED-DEPLOYMENT.vercel.app", // ← add this
   "https://transporter-signup.netlify.app",
   "https://frontend-six-gamma-72.vercel.app",
 
@@ -185,8 +186,8 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use((req, _res, next) => {
   // Only sanitize plain objects — mongoSanitize.sanitize() throws on strings/arrays.
   // req.query is skipped: it is always plain strings (URL params can't carry operators).
-  if (req.body   && typeof req.body   === 'object' && !Array.isArray(req.body))
-    req.body   = mongoSanitize.sanitize(req.body);
+  if (req.body && typeof req.body === 'object' && !Array.isArray(req.body))
+    req.body = mongoSanitize.sanitize(req.body);
   if (req.params && typeof req.params === 'object' && !Array.isArray(req.params))
     req.params = mongoSanitize.sanitize(req.params);
   next();
