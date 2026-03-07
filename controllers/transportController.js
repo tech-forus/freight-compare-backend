@@ -261,10 +261,13 @@ function computeCustomSurcharges(surcharges, baseFreight, chargeableWeight, stan
  * Compute additive charges from user-selected optional charge types.
  * Called from both Block 1 (tied-up vendors) and Block 2 (regular vendors).
  *
- * Charges already unconditionally applied in the main block (fuel, docket,
- * rov, insurance, handling, fm, appointment) are intentionally skipped here
- * to avoid double-counting. Only charges that the main block never applies
- * (cod, topay) plus forced-ODA are handled.
+ * Handles charges that live outside the main calculation block:
+ *   - cod, topay  — never applied in the main block
+ *   - oda         — only applied here when destination is NOT an ODA location
+ *                   (avoids double-counting with the main block's destIsOda path)
+ *
+ * Note: fuel, docket, fov/rov, handling, appt are gated by optKeys inside the
+ * main block itself (not here) so they are already conditional on user selection.
  *
  * @param {Object}   pr                - priceRate from vendor doc
  * @param {number}   chargeableWeight
@@ -889,7 +892,9 @@ export const calculatePrice = async (req, res) => {
 
             const chargeableWeight = Math.max(volumetricWeight, actualWeight);
             const baseFreight = unitPrice * chargeableWeight;
-            const docketCharge = pr.docketCharges || 0;
+            // Keys the user selected on the calculator page — only these are included
+            const optKeys = new Set(Array.isArray(optionalCharges) ? optionalCharges : []);
+            const docketCharge = optKeys.has('docket') ? (pr.docketCharges || 0) : 0;
             const minCharges = pr.minCharges || 0;
             const greenTax = pr.greenTax || 0;
             const daccCharges = pr.daccCharges || 0;
@@ -908,30 +913,33 @@ export const calculatePrice = async (req, res) => {
             // changing this formula or the field semantics in the DB/UTSF files.
             // MUST stay in sync with Block 2 (line ~1074) and utsfService.js (~line 497).
             // ─────────────────────────────────────────────────────────────────
-            const fuelCharges = Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity);
-            const rovCharges = Math.max(
+            const fuelCharges = optKeys.has('fuel')
+              ? Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity)
+              : 0;
+            const rovCharges = optKeys.has('fov') ? Math.max(
               ((pr.rovCharges?.variable || 0) / 100) * baseFreight,
               pr.rovCharges?.fixed || 0
-            );
-            const insuaranceCharges = Math.max(
+            ) : 0;
+            const insuaranceCharges = optKeys.has('fov') ? Math.max(
               ((pr.insuaranceCharges?.variable || 0) / 100) * baseFreight,
               pr.insuaranceCharges?.fixed || 0
-            );
+            ) : 0;
             const odaCharges = destIsOda
               ? (pr.odaCharges?.fixed || 0) +
               chargeableWeight * ((pr.odaCharges?.variable || 0) / 100)
               : 0;
-            const handlingCharges =
-              (pr.handlingCharges?.fixed || 0) +
-              chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100);
+            const handlingCharges = optKeys.has('handling')
+              ? (pr.handlingCharges?.fixed || 0) +
+                chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100)
+              : 0;
             const fmCharges = Math.max(
               ((pr.fmCharges?.variable || 0) / 100) * baseFreight,
               pr.fmCharges?.fixed || 0
             );
-            const appointmentCharges = Math.max(
+            const appointmentCharges = optKeys.has('appt') ? Math.max(
               ((pr.appointmentCharges?.variable || 0) / 100) * baseFreight,
               pr.appointmentCharges?.fixed || 0
-            );
+            ) : 0;
 
             // FIX: minCharges is a FLOOR constraint, not an additive fee
             // effectiveBaseFreight ensures freight is never below minimum
@@ -1173,7 +1181,9 @@ export const calculatePrice = async (req, res) => {
 
             const chargeableWeight = Math.max(volumetricWeight, actualWeight);
             const baseFreight = unitPrice * chargeableWeight;
-            const docketCharge = pr.docketCharges || 0;
+            // Keys the user selected on the calculator page — only these are included
+            const optKeys = new Set(Array.isArray(optionalCharges) ? optionalCharges : []);
+            const docketCharge = optKeys.has('docket') ? (pr.docketCharges || 0) : 0;
             const minCharges = pr.minCharges || 0;
             const greenTax = pr.greenTax || 0;
             const daccCharges = pr.daccCharges || 0;
@@ -1192,15 +1202,17 @@ export const calculatePrice = async (req, res) => {
             // changing this formula or the field semantics in the DB/UTSF files.
             // MUST stay in sync with Block 1 (line ~811) and utsfService.js (~line 497).
             // ─────────────────────────────────────────────────────────────────
-            const fuelCharges = Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity);
-            const rovCharges = Math.max(
+            const fuelCharges = optKeys.has('fuel')
+              ? Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity)
+              : 0;
+            const rovCharges = optKeys.has('fov') ? Math.max(
               ((pr.rovCharges?.variable || 0) / 100) * baseFreight,
               pr.rovCharges?.fixed || 0
-            );
-            const insuaranceCharges = Math.max(
+            ) : 0;
+            const insuaranceCharges = optKeys.has('fov') ? Math.max(
               ((pr.insuaranceCharges?.variable || 0) / 100) * baseFreight,
               pr.insuaranceCharges?.fixed || 0
-            );
+            ) : 0;
             let odaCharges = 0;
             if (isDestOda) {
               const odaFixed = pr.odaCharges?.fixed || pr.odaCharges?.f || 0;
@@ -1215,17 +1227,18 @@ export const calculatePrice = async (req, res) => {
                 odaCharges = odaFixed + (chargeableWeight * odaVar / 100);
               }
             }
-            const handlingCharges =
-              (pr.handlingCharges?.fixed || 0) +
-              chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100);
+            const handlingCharges = optKeys.has('handling')
+              ? (pr.handlingCharges?.fixed || 0) +
+                chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100)
+              : 0;
             const fmCharges = Math.max(
               ((pr.fmCharges?.variable || 0) / 100) * baseFreight,
               pr.fmCharges?.fixed || 0
             );
-            const appointmentCharges = Math.max(
+            const appointmentCharges = optKeys.has('appt') ? Math.max(
               ((pr.appointmentCharges?.variable || 0) / 100) * baseFreight,
               pr.appointmentCharges?.fixed || 0
-            );
+            ) : 0;
 
             // FIX: minCharges is a FLOOR constraint, not an additive fee
             // effectiveBaseFreight ensures freight is never below minimum
