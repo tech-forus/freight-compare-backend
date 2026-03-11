@@ -167,6 +167,26 @@ const temporaryTransporterModel = new mongoose.Schema(
       enum: ['excel', 'manual', 'cloned', 'wizard', ''],
       default: '',
     },
+    // System-integrated vendor (IndiaPost, etc.) - uses platform pricing engine, no manual config needed
+    isSystemVendor: {
+      type: Boolean,
+      default: false,
+    },
+    // ID of the system vendor (e.g. 'indiapost-transporter')
+    systemVendorId: {
+      type: String,
+      default: '',
+    },
+    // API endpoint for vendors that have wired up their own pricing API
+    apiEndpoint: {
+      type: String,
+      default: '',
+    },
+    // API key for the vendor's pricing API (optional, stored securely)
+    apiKey: {
+      type: String,
+      default: '',
+    },
     prices: {
       priceRate: {
         minWeight: {

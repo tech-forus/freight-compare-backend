@@ -4,6 +4,7 @@ import multer from "multer";
 
 import {
   addTiedUpCompany,
+  addSystemVendor,
   calculatePrice,
   getAllTransporters,
   getPackingList,
@@ -86,6 +87,8 @@ router.get('/search-transporters', protect, searchTransporters);  // Fast search
 router.get('/search-transporters/:id', protect, getSearchTransporterDetail);  // Full detail by ID
 router.post("/addtiedupcompanies", protect, upload.single('priceChart'), addTiedUpCompany);
 router.post("/add-tied-up", protect, addTiedUpCompany);
+// One-click add for platform-integrated system vendors (e.g. IndiaPost)
+router.post("/add-system-vendor", protect, addSystemVendor);
 
 // Tied-up & temporary vendors
 router.get("/gettiedupcompanies", protect, getTiedUpCompanies);

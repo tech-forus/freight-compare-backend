@@ -3,6 +3,7 @@ import customerModel from "../model/customerModel.js";
 import priceModel from "../model/priceModel.js";
 import temporaryTransporterModel from "../model/temporaryTransporterModel.js";
 import transporterModel from "../model/transporterModel.js";
+import { findIndiaPostPrice } from "../utils/indiaPostPricing.js";
 import PackingList from "../model/packingModel.js";
 import BoxLibrary from "../model/boxLibraryModel.js";
 import redisClient from "../utils/redisClient.js";
@@ -687,6 +688,8 @@ export const calculatePrice = async (req, res) => {
               rating: 1,
               vendorRatings: 1,
               totalRatings: 1,
+              isSystemVendor: 1,
+              systemVendorId: 1,
               // CRITICAL OPTIMIZATION: Only fetch the 2 pincodes we need
               serviceability: {
                 $filter: {
@@ -798,6 +801,36 @@ export const calculatePrice = async (req, res) => {
           try {
             const companyName = tuc.companyName;
             if (!companyName) return null;
+
+            // ── System vendor (IndiaPost): static pricing, no DB needed ──
+            if (tuc.isSystemVendor && tuc.systemVendorId === 'indiapost-transporter') {
+              // Only show IndiaPost in Your Vendors for the customer who explicitly added it
+              if (String(tuc.customerID) !== String(customerID)) return null;
+              const distKm = distData.distanceKm || parseFloat(String(dist).replace(/[^0-9.]/g, '')) || 0;
+              if (!distKm) return null;
+              const ipResult = findIndiaPostPrice(actualWeight, distKm);
+              if (!ipResult || !ipResult.price) return null;
+              return {
+                companyName: 'IndiaPost',
+                totalCharges: ipResult.price,
+                baseFreight: ipResult.price,
+                chargeableWeight: actualWeight,
+                unitPrice: actualWeight > 0 ? Math.round((ipResult.price / actualWeight) * 100) / 100 : 0,
+                breakdown: { baseFreight: ipResult.price },
+                isVerified: true,
+                isSystemVendor: true,
+                isTiedUp: true,
+                rating: tuc.rating || 4.2,
+                vendorRatings: tuc.vendorRatings || null,
+                totalRatings: tuc.totalRatings || 0,
+                weightBreakdown: { actualWeight, chargeableWeight: actualWeight },
+                source: 'indiapost',
+                distance: dist,
+                originPincode: fromPincode,
+                destinationPincode: toPincode,
+                estimatedTime: estTime,
+              };
+            }
 
             const priceChart = tuc.prices?.priceChart;
             if (!priceChart || !Object.keys(priceChart).length) return null;
@@ -1483,6 +1516,36 @@ export const calculatePrice = async (req, res) => {
       // Combine all results
       const combinedCompanyResult = [...transporterResult, ...utsfPublic];
 
+      // ── INDIA POST: Always inject into Other Vendors unless user already has it as a tied-up vendor ──
+      const userHasIndiaPost = allTiedUpResults.some(r => r.source === 'indiapost' || r.companyName === 'IndiaPost');
+      if (!userHasIndiaPost) {
+        const ipDistKm = distData.distanceKm || parseFloat(String(dist).replace(/[^0-9.]/g, '')) || 0;
+        if (ipDistKm > 0 && actualWeight > 0) {
+          const ipResult = findIndiaPostPrice(actualWeight, ipDistKm);
+          if (ipResult && ipResult.price) {
+            combinedCompanyResult.push({
+              companyName: 'IndiaPost',
+              totalCharges: ipResult.price,
+              baseFreight: ipResult.price,
+              chargeableWeight: actualWeight,
+              actualWeight,
+              unitPrice: Math.round((ipResult.price / actualWeight) * 100) / 100,
+              breakdown: { baseFreight: ipResult.price },
+              isVerified: true,
+              isSystemVendor: true,
+              isTiedUp: false,
+              rating: 4.2,
+              weightBreakdown: { actualWeight, chargeableWeight: actualWeight },
+              source: 'indiapost',
+              distance: dist,
+              originPincode: fromPincode,
+              destinationPincode: toPincode,
+              estimatedTime: estTime,
+            });
+          }
+        }
+      }
+
       // Add debugging summary when no results found
       if (allTiedUpResults.length === 0 && combinedCompanyResult.length === 0) {
         // DEBUG LOG REMOVED
@@ -1633,6 +1696,9 @@ export const addTiedUpCompany = async (req, res) => {
       selectedZones,
       vendorJson, // ⬅️ NEW: grab vendorJson if FE sends it
       invoiceValueCharges, // ⬅️ optional direct field support
+      // API integration (for brands that provide their own pricing API)
+      apiEndpoint,
+      apiKey,
       // NEW: Serviceability data (pincode-authoritative)
       serviceability,
       serviceabilityChecksum,
@@ -1982,6 +2048,8 @@ export const addTiedUpCompany = async (req, res) => {
         priceChart: priceChart || {},
       },
       invoiceValueCharges: finalInvoiceValueCharges,
+      apiEndpoint: apiEndpoint ? String(apiEndpoint).trim().slice(0, 500) : '',
+      apiKey: apiKey ? String(apiKey).trim().slice(0, 200) : '',
     }).save({ validateBeforeSave: !isDraftMode });
 
     if (tempData) {
@@ -2004,6 +2072,88 @@ export const addTiedUpCompany = async (req, res) => {
       error:
         process.env.NODE_ENV === "development" ? err.message : undefined,
     });
+  }
+};
+
+// ============================================================================
+// ADD SYSTEM VENDOR - One-click add for platform-integrated vendors (e.g. IndiaPost)
+// These vendors use the platform's own pricing engine — no manual config needed.
+// ============================================================================
+const SYSTEM_VENDOR_REGISTRY = {
+  'indiapost-transporter': {
+    companyName: 'IndiaPost',
+    vendorCode: 'INDIAPOST',
+    vendorEmail: 'customerservice@indiapost.gov.in',
+    gstNo: '07AAAGE5950H1Z6',
+    transportMode: 'road',
+    address: 'Department of Posts, Dak Bhawan, Sansad Marg, New Delhi',
+    state: 'Delhi',
+    city: 'New Delhi',
+    pincode: 110001,
+    rating: 4.2,
+  },
+};
+
+export const addSystemVendor = async (req, res) => {
+  try {
+    const { customerId, systemVendorId } = req.body;
+
+    if (!customerId || !systemVendorId) {
+      return res.status(400).json({ success: false, message: 'customerId and systemVendorId are required' });
+    }
+
+    const vendorDef = SYSTEM_VENDOR_REGISTRY[systemVendorId];
+    if (!vendorDef) {
+      return res.status(400).json({ success: false, message: `Unknown system vendor: ${systemVendorId}` });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(customerId)) {
+      return res.status(400).json({ success: false, message: 'Invalid customerId format' });
+    }
+
+    // Prevent duplicates
+    const existing = await temporaryTransporterModel.findOne({
+      customerID: customerId,
+      isSystemVendor: true,
+      systemVendorId,
+    });
+
+    if (existing) {
+      return res.status(200).json({
+        success: true,
+        message: `${vendorDef.companyName} is already in your vendors`,
+        alreadyExists: true,
+        vendorId: existing._id,
+      });
+    }
+
+    const newVendor = await new temporaryTransporterModel({
+      customerID: customerId,
+      companyName: vendorDef.companyName,
+      vendorCode: vendorDef.vendorCode,
+      isVerified: true,
+      vendorEmail: vendorDef.vendorEmail,
+      gstNo: vendorDef.gstNo,
+      transportMode: vendorDef.transportMode,
+      address: vendorDef.address,
+      state: vendorDef.state,
+      city: vendorDef.city,
+      pincode: vendorDef.pincode,
+      rating: vendorDef.rating,
+      approvalStatus: 'approved',
+      isSystemVendor: true,
+      systemVendorId,
+      serviceMode: 'LTL',
+    }).save();
+
+    return res.status(201).json({
+      success: true,
+      message: `${vendorDef.companyName} added to your vendors successfully`,
+      vendorId: newVendor._id,
+    });
+  } catch (err) {
+    console.error('[addSystemVendor] Error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
