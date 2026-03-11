@@ -506,10 +506,20 @@ export const loginController = async (req, res) => {
 
     console.log("[Login] Successful login:", customer.email);
 
-    return res.status(200).json({
+    const responsePayload = {
       message: "Login successful!",
       customer: customerData,
-    });
+    };
+
+    // 🔴 Crucial fix for cross-origin frontend/backend setups:
+    // Modern browsers block 3rd-party cookies by default. Since freightcompare.ai and 
+    // railway.app are different domains, the httpOnly cookie is sometimes silently dropped.
+    // We now always return the token in the body, allowing the frontend to fall back 
+    // to localStorage + Bearer token auth if cookies fail.
+    responsePayload.token = accessToken;
+    responsePayload.refreshToken = refreshToken;
+
+    return res.status(200).json(responsePayload);
   } catch (error) {
     console.error("Login Error:", error);
     return res.status(500).json({
