@@ -29,4 +29,14 @@ router.post('/logout', logoutController);
 // @access  Private (requires auth token)
 router.get('/me', protect, getCurrentUser);
 
+// @route   GET api/auth/debug
+// @desc    Debug endpoint returning raw headers and cookies
+// @access  Public
+router.get('/debug', (req, res) => {
+  res.json({
+    headers: req.headers,
+    cookies: req.cookies
+  });
+});
+
 export default router;
