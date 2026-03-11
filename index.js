@@ -110,9 +110,12 @@ app.use(
 
 // ────────────────────────────── CORS (with logs) ─────────────────────────────
 const STATIC_ALLOWED = [
-  // Production
+  // Production - primary custom domain
+  "https://freightcompare.ai",
+  "https://www.freightcompare.ai",
+
+  // Production - legacy Vercel deployments
   "https://freight-compare-frontend.vercel.app",
-  "https://YOUR-NEW-MERGED-DEPLOYMENT.vercel.app", // ← add this
   "https://transporter-signup.netlify.app",
   "https://frontend-six-gamma-72.vercel.app",
 
