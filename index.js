@@ -110,9 +110,12 @@ app.use(
 
 // ────────────────────────────── CORS (with logs) ─────────────────────────────
 const STATIC_ALLOWED = [
-  // Production
+  // Production - primary custom domain
+  "https://freightcompare.ai",
+  "https://www.freightcompare.ai",
+
+  // Production - legacy Vercel deployments
   "https://freight-compare-frontend.vercel.app",
-  "https://YOUR-NEW-MERGED-DEPLOYMENT.vercel.app", // ← add this
   "https://transporter-signup.netlify.app",
   "https://frontend-six-gamma-72.vercel.app",
 
@@ -127,7 +130,7 @@ const EXTRA_ALLOWED = (process.env.CLIENT_ORIGINS || "")
   .map((s) => s.trim())
   .filter(Boolean)
   .filter((origin) => {
-    if (process.env.NODE_ENV === "production" && origin.startsWith("http://")) {
+    if (process.env.NODE_ENV === "production" && origin.startsWith("http://") && !origin.includes("localhost") && !origin.includes("127.0.0.1")) {
       console.warn(`[CORS] ⚠  Insecure http:// origin rejected in production: ${origin}`);
       return false;
     }

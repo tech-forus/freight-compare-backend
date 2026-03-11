@@ -4,7 +4,7 @@
  * This eliminates the single-threaded bottleneck in calculatePrice
  */
 
-import { parentPort } from 'worker_threads';
+import { parentPort, isMainThread } from 'worker_threads';
 
 /**
  * Helper: Get unit price from price chart
@@ -76,7 +76,7 @@ function calculateInvoiceValueCharge(invoiceValue, invoiceValueCharges) {
     const percentageCharge = (invoiceValue * (percentage || 0)) / 100;
     const finalCharge = Math.max(percentageCharge, minimumAmount || 0);
 
-    return Math.round(finalCharge);
+    return parseFloat(finalCharge.toFixed(2));
 }
 
 /**
@@ -92,8 +92,11 @@ function calculateVendorPrice(vendor, context) {
             actualWeight,
             shipment_details, legacyParams,
             invoiceValue,
-            customerID
+            customerID,
+            optionalCharges
         } = context;
+
+        const optKeys = new Set(Array.isArray(optionalCharges) ? optionalCharges : []);
 
         const vendorType = vendor.type; // 'tied-up' or 'public'
         const companyName = vendor.companyName;
@@ -138,9 +141,11 @@ function calculateVendorPrice(vendor, context) {
         const baseFreight = unitPrice * chargeableWeight;
         const docketCharge = pr.docketCharges || 0;
         const minCharges = pr.minCharges || 0;
+        // Mandatory vendor charges — always applied regardless of user selection
         const greenTax = pr.greenTax || 0;
-        const daccCharges = pr.daccCharges || 0;
         const miscCharges = pr.miscellanousCharges || 0;
+        // Optional charges — applied only when user selected them
+        const daccCharges = optKeys.has('dacc') ? (pr.daccCharges || 0) : 0;
         const fuelCharges = ((pr.fuel || 0) / 100) * baseFreight;
         const rovCharges = Math.max(
             ((pr.rovCharges?.variable || 0) / 100) * baseFreight,
@@ -165,11 +170,21 @@ function calculateVendorPrice(vendor, context) {
             ((pr.appointmentCharges?.variable || 0) / 100) * baseFreight,
             pr.appointmentCharges?.fixed || 0
         );
+        const codCharges = optKeys.has('cod') ? Math.max(
+            ((pr.codCharges?.variable || 0) / 100) * baseFreight,
+            pr.codCharges?.fixed || 0
+        ) : 0;
+        const topayCharges = optKeys.has('topay') ? Math.max(
+            ((pr.topayCharges?.variable || 0) / 100) * baseFreight,
+            pr.topayCharges?.fixed || 0
+        ) : 0;
+        const hamaliCharges = pr.hamaliCharges || 0;
+        const chequeHandlingCharges = optKeys.has('chequehandling') ? (pr.chequeHandlingCharges || 0) : 0;
 
         // Apply minimum charges as floor
         const effectiveBaseFreight = Math.max(baseFreight, minCharges);
 
-        const totalChargesBeforeAddon =
+        let totalChargesBeforeAddon =
             effectiveBaseFreight +
             docketCharge +
             greenTax +
@@ -181,7 +196,13 @@ function calculateVendorPrice(vendor, context) {
             odaCharges +
             handlingCharges +
             fmCharges +
-            appointmentCharges;
+            appointmentCharges +
+            codCharges +
+            topayCharges +
+            hamaliCharges +
+            chequeHandlingCharges;
+
+        // Optional charges are conditionally applied above — no subtraction needed
 
         // Invoice addon
         const invoiceAddon = calculateInvoiceValueCharge(invoiceValue, invoiceValueCharges);
@@ -200,6 +221,7 @@ function calculateVendorPrice(vendor, context) {
             chargeableWeight: parseFloat(chargeableWeight.toFixed(2)),
             unitPrice,
             baseFreight,
+            effectiveBaseFreight,
             docketCharge,
             minCharges,
             greenTax,
@@ -212,11 +234,15 @@ function calculateVendorPrice(vendor, context) {
             handlingCharges,
             fmCharges,
             appointmentCharges,
+            codCharges,
+            topayCharges,
+            hamaliCharges,
+            chequeHandlingCharges,
             invoiceValue,
-            invoiceAddon: Math.round(invoiceAddon),
-            invoiceValueCharge: Math.round(invoiceAddon),
-            totalCharges: Math.round(totalChargesBeforeAddon + invoiceAddon),
-            totalChargesWithoutInvoiceAddon: Math.round(totalChargesBeforeAddon),
+            invoiceAddon: parseFloat(invoiceAddon.toFixed(2)),
+            invoiceValueCharge: parseFloat(invoiceAddon.toFixed(2)),
+            totalCharges: parseFloat((totalChargesBeforeAddon + invoiceAddon).toFixed(2)),
+            totalChargesWithoutInvoiceAddon: parseFloat(totalChargesBeforeAddon.toFixed(2)),
             isHidden: vendor.isHidden || false,
             isTemporaryTransporter: vendorType === 'tied-up',
             isTiedUp: vendorType === 'tied-up' && vendor.customerID && vendor.customerID.toString() === customerID?.toString(),

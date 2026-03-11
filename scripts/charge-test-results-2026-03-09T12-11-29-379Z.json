@@ -1,0 +1,109 @@
+{
+  "runAt": "2026-03-09T12:11:29.380Z",
+  "summary": {
+    "total": 20,
+    "passed": 17,
+    "failed": 3
+  },
+  "cases": [
+    {
+      "name": "TC-01  No optional charges selected → all optional line items zeroed",
+      "status": "FAIL",
+      "error": "greenTax should be zeroed: expected 0, got 50"
+    },
+    {
+      "name": "TC-02  All optional charges selected → nothing subtracted, total unchanged",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-03  Only COD selected → only codCharges kept, rest zeroed",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-04  Only Green Tax selected → only greenTax kept",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-05  COD + To-Pay both selected (edge: logically exclusive but not validated)",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-06  Only Hamali selected → only hamaliCharges kept",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-07  Cheque Handling selected, vendor has 0 value → total unchanged from base",
+      "status": "FAIL",
+      "error": "No change when vendor has 0 cheque handling: expected 1000, got 640"
+    },
+    {
+      "name": "TC-08  Misc selected but vendor has zero misc charges → total unchanged",
+      "status": "FAIL",
+      "error": "Zero-value misc has no effect: expected 1000, got 645"
+    },
+    {
+      "name": "TC-09  Appt. Delivery selected → appointmentCharges kept",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-10  Vendor with ALL zero optional charges → any selection combo gives same total",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-11  Mandatory key toggle is a no-op (cannot deselect mandatory)",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-12  Toggle optional on then off → net zero change",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-13  Select All adds all 8 optional keys on top of mandatory",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-14  Deselect All retains only mandatory keys",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-15  Array.from serialisation round-trips correctly",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-16  ODA key not in OPTIONAL_CHARGE_MAP → subtractUnselectedCharges ignores it",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-17  destIsOda=false → odaCharges=0 regardless of ODA checkbox state",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-18  destIsOda=true → odaCharges calculated regardless of ODA checkbox",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-19  fuel in optKeys → fuelCharges calculated; missing → 0",
+      "status": "PASS"
+    },
+    {
+      "name": "TC-20  Math.max(0, total) prevents negative result when large charges subtracted",
+      "status": "PASS"
+    }
+  ],
+  "chargeMap": {
+    "greentax": "greenTax",
+    "misc": "miscCharges",
+    "hamali": "hamaliCharges",
+    "cod": "codCharges",
+    "topay": "topayCharges",
+    "chequehandling": "chequeHandlingCharges",
+    "appt": "appointmentCharges"
+  },
+  "notes": {
+    "mandatory": "docket, fuel, fov, handling, dacc — always in optKeys, cannot be deselected",
+    "oda": "Auto-detected from pincode (destIsOda flag); not in OPTIONAL_CHARGE_MAP; checkbox has no effect on calculation",
+    "subtraction": "Backend calculates ALL charges first, then subtracts unselected optionals via subtractUnselectedCharges()",
+    "fuelAndFov": "Calculated conditionally via optKeys.has(\"fuel\"/\"fov\") — but since they are mandatory they are always present",
+    "zeroGuard": "Math.max(0, finalTotal) prevents negative totals"
+  }
+}

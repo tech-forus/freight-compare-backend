@@ -488,11 +488,14 @@ export const loginController = async (req, res) => {
     const hashedRefresh = crypto.createHash("sha256").update(refreshToken).digest("hex");
     await redisClient.set(`refreshToken:${customer._id}`, hashedRefresh, { EX: 7 * 24 * 60 * 60 });
 
-    const isProd = process.env.NODE_ENV === "production";
+    // Use HTTPS-detection rather than NODE_ENV — Render/Railway may not set NODE_ENV=production.
+    // req.secure is true when the Express connection itself is HTTPS;
+    // x-forwarded-proto is set by the load-balancer (Railway, Render, Vercel, etc.) when TLS terminates there.
+    const isHttps = req.secure || (req.headers['x-forwarded-proto'] || '').includes('https') || process.env.NODE_ENV === 'production';
     const cookieOpts = {
       httpOnly: true,
-      secure: isProd,
-      sameSite: isProd ? "None" : "Lax",
+      secure: isHttps,
+      sameSite: isHttps ? "None" : "Lax",
     };
 
     res.cookie("authToken", accessToken, { ...cookieOpts, maxAge: 7 * 24 * 60 * 60 * 1000 });
@@ -503,10 +506,20 @@ export const loginController = async (req, res) => {
 
     console.log("[Login] Successful login:", customer.email);
 
-    return res.status(200).json({
+    const responsePayload = {
       message: "Login successful!",
       customer: customerData,
-    });
+    };
+
+    // 🔴 Crucial fix for cross-origin frontend/backend setups:
+    // Modern browsers block 3rd-party cookies by default. Since freightcompare.ai and 
+    // railway.app are different domains, the httpOnly cookie is sometimes silently dropped.
+    // We now always return the token in the body, allowing the frontend to fall back 
+    // to localStorage + Bearer token auth if cookies fail.
+    responsePayload.token = accessToken;
+    responsePayload.refreshToken = refreshToken;
+
+    return res.status(200).json(responsePayload);
   } catch (error) {
     console.error("Login Error:", error);
     return res.status(500).json({
@@ -521,8 +534,8 @@ export const loginController = async (req, res) => {
 ========================= */
 
 export const logoutController = async (req, res) => {
-  const isProd = process.env.NODE_ENV === "production";
-  const cookieOpts = { httpOnly: true, secure: isProd, sameSite: isProd ? "None" : "Lax" };
+  const isHttps = req.secure || (req.headers['x-forwarded-proto'] || '').includes('https') || process.env.NODE_ENV === 'production';
+  const cookieOpts = { httpOnly: true, secure: isHttps, sameSite: isHttps ? "None" : "Lax" };
 
   // Remove refresh token from Redis so it cannot be reused.
   // Read userId from the refreshToken cookie directly — this works even when the
@@ -619,11 +632,11 @@ export const refreshController = async (req, res) => {
       expiresIn: process.env.JWT_EXPIRES_IN || "15m",
     });
 
-    const isProd = process.env.NODE_ENV === "production";
+    const isHttps = req.secure || (req.headers['x-forwarded-proto'] || '').includes('https') || process.env.NODE_ENV === 'production';
     res.cookie("authToken", newAccessToken, {
       httpOnly: true,
-      secure: isProd,
-      sameSite: isProd ? "None" : "Lax",
+      secure: isHttps,
+      sameSite: isHttps ? "None" : "Lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 

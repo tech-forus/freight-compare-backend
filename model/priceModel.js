@@ -195,6 +195,11 @@ const pricesSchema = new mongoose.Schema(
         required: true,
         default: 0,
       },
+      hamaliCharges: {
+        type: Number,
+        required: true,
+        default: 0,
+      },
 
 
     },

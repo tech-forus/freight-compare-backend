@@ -155,11 +155,11 @@ export const protect = async (req, res, next) => {
               const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, {
                 expiresIn: process.env.JWT_EXPIRES_IN || '15m',
               });
-              const isProd = process.env.NODE_ENV === 'production';
+              const isHttps = req.secure || (req.headers['x-forwarded-proto'] || '').includes('https') || process.env.NODE_ENV === 'production';
               res.cookie('authToken', newAccessToken, {
                 httpOnly: true,
-                secure: isProd,
-                sameSite: isProd ? 'None' : 'Lax',
+                secure: isHttps,
+                sameSite: isHttps ? 'None' : 'Lax',
                 maxAge: 7 * 24 * 60 * 60 * 1000,
               });
               req.customer = customer;

@@ -8,6 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import boxLibraryModel from '../model/boxLibraryModel.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -487,11 +488,16 @@ class UTSFTransporter {
     // if 'minChargesApplyToTotal' is true
     const effectiveBaseFreight = pr.minChargesApplyToTotal ? baseFreight : Math.max(baseFreight, minBaseFreight);
 
-    // Fixed charges
+    // Optional charges selection set
+    const _optKeys = new Set(Array.isArray(optionalCharges) ? optionalCharges : []);
+
+    // Mandatory fixed charges
     const docketCharge = pr.docketCharges || 0;
+    // Mandatory vendor charges — always applied regardless of user selection
     const greenTax = pr.greenTax || 0;
-    const daccCharges = pr.daccCharges || 0;
     const miscCharges = pr.miscellanousCharges || pr.miscCharges || 0;
+    // Optional charges — applied only when user selected them
+    const daccCharges = _optKeys.has('dacc') ? (pr.daccCharges || 0) : 0;
 
     // ⚠️  FUEL SURCHARGE FORMULA — READ BEFORE MODIFYING ⚠️
     // ─────────────────────────────────────────────────────────────────
@@ -522,7 +528,11 @@ class UTSFTransporter {
     const rovCharges = computeCharge(pr.rovCharges);
     const insuaranceCharges = computeCharge(pr.insuaranceCharges || pr.insuranceCharges);
     const fmCharges = computeCharge(pr.fmCharges);
-    const appointmentCharges = computeCharge(pr.appointmentCharges);
+    const appointmentCharges = 0;
+    const codCharges = _optKeys.has('cod') ? computeCharge(pr.codCharges) : 0;
+    const topayCharges = _optKeys.has('topay') ? computeCharge(pr.topayCharges) : 0;
+    const hamaliCharges = pr.hamaliCharges || 0;
+    const chequeHandlingCharges = _optKeys.has('chequehandling') ? (pr.chequeHandlingCharges || 0) : 0;
 
     // Handling charges: fixed + weight * variable% (lines 812-814)
     // Support threshold weight - only charge for weight above threshold
@@ -538,7 +548,7 @@ class UTSFTransporter {
     //   excess:  f + max(0,w-thresh)*v  (v is per-kg, on weight above threshold)
     //   switch:  w > thresh ? v*w : f   (v is per-kg, applied to ALL weight)
     let odaCharges = 0;
-    if (toResult.isOda) {
+    if (_optKeys.has('oda') && toResult.isOda) {
       const odaConfig = pr.odaCharges || {};
       const odaFixed = odaConfig.f !== undefined ? odaConfig.f : (odaConfig.fixed || 0);
       const odaVariable = odaConfig.v !== undefined ? odaConfig.v : (odaConfig.variable || 0);
@@ -563,43 +573,27 @@ class UTSFTransporter {
       invoiceValueCharges = Math.max((percentage / 100) * invoiceValue, minAmount);
     }
 
-    // Optional charges (user-selected: oda forced, cod, topay)
-    const _optKeys = new Set(Array.isArray(optionalCharges) ? optionalCharges : []);
-    let optionalChargesAddon = 0;
+    const optionalChargesAddon = 0;
     const optionalChargesBreakdown = {};
-    if (_optKeys.has('oda') && !toResult.isOda) {
-      const odaConfig = pr.odaCharges || {};
-      const odaFixed = odaConfig.f !== undefined ? odaConfig.f : (odaConfig.fixed || 0);
-      const odaVar   = odaConfig.v !== undefined ? odaConfig.v : (odaConfig.variable || 0);
-      const oda = odaFixed + (chargeableWeight * odaVar / 100);
-      if (oda > 0) { optionalChargesBreakdown.oda = Math.round(oda); optionalChargesAddon += oda; }
-    }
-    if (_optKeys.has('cod')) {
-      const cod = computeCharge(pr.codCharges);
-      if (cod > 0) { optionalChargesBreakdown.cod = Math.round(cod); optionalChargesAddon += cod; }
-    }
-    if (_optKeys.has('topay')) {
-      const topay = computeCharge(pr.topayCharges);
-      if (topay > 0) { optionalChargesBreakdown.topay = Math.round(topay); optionalChargesAddon += topay; }
-    }
 
     // Custom surcharges (carrier-specific: IDC, CAF, reattempt, etc.)
     const _standardSub = effectiveBaseFreight + docketCharge + greenTax + daccCharges
       + miscCharges + fuelCharges + rovCharges + insuaranceCharges + odaCharges
-      + handlingCharges + fmCharges + appointmentCharges + invoiceValueCharges;
+      + handlingCharges + fmCharges + appointmentCharges + codCharges + topayCharges
+      + hamaliCharges + chequeHandlingCharges + invoiceValueCharges;
     const _customSurcharges = (pr.surcharges || [])
       .filter(s => s && s.enabled !== false)
       .sort((a, b) => (a.order || 99) - (b.order || 99))
       .reduce((acc, s) => {
-        const v  = Number(s.value)  || 0;
+        const v = Number(s.value) || 0;
         const v2 = Number(s.value2) || 0;
         switch (s.formula) {
-          case 'PCT_OF_BASE':     return acc + (v / 100) * baseFreight;
+          case 'PCT_OF_BASE': return acc + (v / 100) * baseFreight;
           case 'PCT_OF_SUBTOTAL': return acc + (v / 100) * _standardSub;
-          case 'FLAT':            return acc + v;
-          case 'PER_KG':          return acc + v * chargeableWeight;
-          case 'MAX_FLAT_PKG':    return acc + Math.max(v, v2 * chargeableWeight);
-          default:                return acc;
+          case 'FLAT': return acc + v;
+          case 'PER_KG': return acc + v * chargeableWeight;
+          case 'MAX_FLAT_PKG': return acc + Math.max(v, v2 * chargeableWeight);
+          default: return acc;
         }
       }, 0);
 
@@ -617,9 +611,15 @@ class UTSFTransporter {
       handlingCharges +
       fmCharges +
       appointmentCharges +
+      codCharges +
+      topayCharges +
+      hamaliCharges +
+      chequeHandlingCharges +
       invoiceValueCharges +
       _customSurcharges +
       optionalChargesAddon;
+
+    // Optional charges are conditionally applied above — no subtraction needed
 
     // Apply minimum total charges if configured (e.g., DB Schenker 400 INR is total floor)
     // This uses the minBaseFreight key if minApplyToTotal is true, OR an explicit minTotalCharges key
@@ -629,27 +629,32 @@ class UTSFTransporter {
     }
 
     const breakdown = {
-      baseFreight: Math.round(baseFreight * 100) / 100,
-      effectiveBaseFreight: Math.round(effectiveBaseFreight * 100) / 100,
-      docketCharge,
+      baseFreight: parseFloat(baseFreight.toFixed(2)),
+      effectiveBaseFreight: parseFloat(effectiveBaseFreight.toFixed(2)),
+      docketCharge: parseFloat(docketCharge.toFixed(2)),
       greenTax,
-      daccCharges,
+      daccCharges: parseFloat(daccCharges.toFixed(2)),
       miscCharges,
-      fuelCharges: Math.round(fuelCharges * 100) / 100,
-      rovCharges: Math.round(rovCharges * 100) / 100,
-      insuaranceCharges: Math.round(insuaranceCharges * 100) / 100,
-      odaCharges: Math.round(odaCharges * 100) / 100,
-      handlingCharges: Math.round(handlingCharges * 100) / 100,
-      fmCharges: Math.round(fmCharges * 100) / 100,
-      appointmentCharges: Math.round(appointmentCharges * 100) / 100,
-      invoiceValueCharges: Math.round(invoiceValueCharges * 100) / 100
+      fuelCharges: parseFloat(fuelCharges.toFixed(2)),
+      rovCharges: parseFloat(rovCharges.toFixed(2)),
+      insuaranceCharges: parseFloat(insuaranceCharges.toFixed(2)),
+      odaCharges: parseFloat(odaCharges.toFixed(2)),
+      handlingCharges: parseFloat(handlingCharges.toFixed(2)),
+      fmCharges: parseFloat(fmCharges.toFixed(2)),
+      appointmentCharges: parseFloat(appointmentCharges.toFixed(2)),
+      invoiceValueCharges: parseFloat(invoiceValueCharges.toFixed(2)),
+      codCharges: parseFloat(codCharges.toFixed(2)),
+      topayCharges: parseFloat(topayCharges.toFixed(2)),
+      hamaliCharges: parseFloat(hamaliCharges.toFixed(2)),
+      chequeHandlingCharges: parseFloat(chequeHandlingCharges.toFixed(2)),
+      customSurcharges: parseFloat(_customSurcharges.toFixed(2)),
     };
 
     return {
       unitPrice,
       baseFreight: breakdown.baseFreight,
-      totalCharges: Math.round(totalChargesBeforeAddon * 100) / 100,
-      optionalChargesAddon: Math.round(optionalChargesAddon),
+      totalCharges: parseFloat(totalChargesBeforeAddon.toFixed(2)),
+      optionalChargesAddon: parseFloat(optionalChargesAddon.toFixed(2)),
       optionalChargesBreakdown,
       breakdown,
       originZone,
