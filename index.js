@@ -130,7 +130,7 @@ const EXTRA_ALLOWED = (process.env.CLIENT_ORIGINS || "")
   .map((s) => s.trim())
   .filter(Boolean)
   .filter((origin) => {
-    if (process.env.NODE_ENV === "production" && origin.startsWith("http://")) {
+    if (process.env.NODE_ENV === "production" && origin.startsWith("http://") && !origin.includes("localhost") && !origin.includes("127.0.0.1")) {
       console.warn(`[CORS] ⚠  Insecure http:// origin rejected in production: ${origin}`);
       return false;
     }
