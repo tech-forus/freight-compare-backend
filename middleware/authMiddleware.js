@@ -155,7 +155,7 @@ export const protect = async (req, res, next) => {
               const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, {
                 expiresIn: process.env.JWT_EXPIRES_IN || '15m',
               });
-              const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+              const isHttps = req.secure || (req.headers['x-forwarded-proto'] || '').includes('https') || process.env.NODE_ENV === 'production';
               res.cookie('authToken', newAccessToken, {
                 httpOnly: true,
                 secure: isHttps,

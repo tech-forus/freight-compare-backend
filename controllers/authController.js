@@ -491,7 +491,7 @@ export const loginController = async (req, res) => {
     // Use HTTPS-detection rather than NODE_ENV — Render/Railway may not set NODE_ENV=production.
     // req.secure is true when the Express connection itself is HTTPS;
     // x-forwarded-proto is set by the load-balancer (Railway, Render, Vercel, etc.) when TLS terminates there.
-    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    const isHttps = req.secure || (req.headers['x-forwarded-proto'] || '').includes('https') || process.env.NODE_ENV === 'production';
     const cookieOpts = {
       httpOnly: true,
       secure: isHttps,
@@ -524,7 +524,7 @@ export const loginController = async (req, res) => {
 ========================= */
 
 export const logoutController = async (req, res) => {
-  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const isHttps = req.secure || (req.headers['x-forwarded-proto'] || '').includes('https') || process.env.NODE_ENV === 'production';
   const cookieOpts = { httpOnly: true, secure: isHttps, sameSite: isHttps ? "None" : "Lax" };
 
   // Remove refresh token from Redis so it cannot be reused.
@@ -622,7 +622,7 @@ export const refreshController = async (req, res) => {
       expiresIn: process.env.JWT_EXPIRES_IN || "15m",
     });
 
-    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    const isHttps = req.secure || (req.headers['x-forwarded-proto'] || '').includes('https') || process.env.NODE_ENV === 'production';
     res.cookie("authToken", newAccessToken, {
       httpOnly: true,
       secure: isHttps,
