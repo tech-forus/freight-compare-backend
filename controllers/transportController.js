@@ -257,59 +257,6 @@ function computeCustomSurcharges(surcharges, baseFreight, chargeableWeight, stan
     }, 0);
 }
 
-/**
- * Compute additive charges from user-selected optional charge types.
- * Called from both Block 1 (tied-up vendors) and Block 2 (regular vendors).
- *
- * Handles charges that live outside the main calculation block:
- *   - cod, topay  — never applied in the main block
- *   - oda         — only applied here when destination is NOT an ODA location
- *                   (avoids double-counting with the main block's destIsOda path)
- *
- * Note: fuel, docket, fov/rov, handling, appt are gated by optKeys inside the
- * main block itself (not here) so they are already conditional on user selection.
- *
- * @param {Object}   pr                - priceRate from vendor doc
- * @param {number}   chargeableWeight
- * @param {number}   baseFreight
- * @param {string[]} selectedKeys      - from req.body.optionalCharges
- * @param {boolean}  alreadyAppliedOda - true when destIsOda was already included
- * @returns {{ total: number, breakdown: Record<string,number> }}
- */
-function computeOptionalChargeAddons(pr, chargeableWeight, baseFreight, selectedKeys, alreadyAppliedOda) {
-  if (!Array.isArray(selectedKeys) || !selectedKeys.length) return { total: 0, breakdown: {} };
-  const keys = new Set(selectedKeys);
-  const breakdown = {};
-  let total = 0;
-
-  // ODA — only add if destination was NOT already flagged as ODA (avoid double-counting)
-  if (keys.has('oda') && !alreadyAppliedOda) {
-    const odaFixed = pr.odaCharges?.fixed || 0;
-    const odaVar   = pr.odaCharges?.variable || 0;
-    const oda = odaFixed + (chargeableWeight * odaVar / 100);
-    if (oda > 0) { breakdown.oda = Math.round(oda); total += oda; }
-  }
-
-  // COD charges
-  if (keys.has('cod')) {
-    const cod = Math.max(
-      ((pr.codCharges?.variable || 0) / 100) * baseFreight,
-      pr.codCharges?.fixed || 0
-    );
-    if (cod > 0) { breakdown.cod = Math.round(cod); total += cod; }
-  }
-
-  // To Pay charges
-  if (keys.has('topay')) {
-    const topay = Math.max(
-      ((pr.topayCharges?.variable || 0) / 100) * baseFreight,
-      pr.topayCharges?.fixed || 0
-    );
-    if (topay > 0) { breakdown.topay = Math.round(topay); total += topay; }
-  }
-
-  return { total, breakdown };
-}
 
 function calculateInvoiceValueCharge(invoiceValue, invoiceValueCharges) {
   // If not enabled or no invoice value, return 0
@@ -325,7 +272,7 @@ function calculateInvoiceValueCharge(invoiceValue, invoiceValueCharges) {
   // Return MAX of percentage charge or minimum amount
   const finalCharge = Math.max(percentageCharge, minimumAmount || 0);
 
-  return Math.round(finalCharge); // Return rounded rupee amount
+  return parseFloat(finalCharge.toFixed(2)); // Return exact value (2dp)
 }
 /**
  * applyInvoiceRule(ruleObject, invoiceValue, ctx)
@@ -892,13 +839,18 @@ export const calculatePrice = async (req, res) => {
 
             const chargeableWeight = Math.max(volumetricWeight, actualWeight);
             const baseFreight = unitPrice * chargeableWeight;
-            // Keys the user selected on the calculator page — only these are included
+            // Keys the user selected on the calculator page
             const optKeys = new Set(Array.isArray(optionalCharges) ? optionalCharges : []);
-            const docketCharge = optKeys.has('docket') ? (pr.docketCharges || 0) : 0;
+
+            // Mandatory charges — always applied
+            const docketCharge = pr.docketCharges || 0;
             const minCharges = pr.minCharges || 0;
+            // Mandatory vendor charges — always applied regardless of user selection
             const greenTax = pr.greenTax || 0;
-            const daccCharges = pr.daccCharges || 0;
             const miscCharges = pr.miscellanousCharges || 0;
+            const hamaliCharges = pr.hamaliCharges || 0;
+            // Optional charges — applied only when user selected them
+            const daccCharges = optKeys.has('dacc') ? (pr.daccCharges || 0) : 0;
             // ⚠️  FUEL SURCHARGE FORMULA — READ BEFORE MODIFYING ⚠️
             // ─────────────────────────────────────────────────────────────────
             // `pr.fuel`    = percentage stored as a whole number (e.g. 5 → 5%)
@@ -924,22 +876,26 @@ export const calculatePrice = async (req, res) => {
               ((pr.insuaranceCharges?.variable || 0) / 100) * baseFreight,
               pr.insuaranceCharges?.fixed || 0
             ) : 0;
-            const odaCharges = destIsOda
+            const odaCharges = (optKeys.has('oda') && destIsOda)
               ? (pr.odaCharges?.fixed || 0) +
               chargeableWeight * ((pr.odaCharges?.variable || 0) / 100)
               : 0;
-            const handlingCharges = optKeys.has('handling')
-              ? (pr.handlingCharges?.fixed || 0) +
-                chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100)
-              : 0;
+            const handlingCharges = (pr.handlingCharges?.fixed || 0) +
+              chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100);
             const fmCharges = Math.max(
               ((pr.fmCharges?.variable || 0) / 100) * baseFreight,
               pr.fmCharges?.fixed || 0
             );
-            const appointmentCharges = optKeys.has('appt') ? Math.max(
-              ((pr.appointmentCharges?.variable || 0) / 100) * baseFreight,
-              pr.appointmentCharges?.fixed || 0
+            const appointmentCharges = 0;
+            const codCharges = optKeys.has('cod') ? Math.max(
+              ((pr.codCharges?.variable || 0) / 100) * baseFreight,
+              pr.codCharges?.fixed || 0
             ) : 0;
+            const topayCharges = optKeys.has('topay') ? Math.max(
+              ((pr.topayCharges?.variable || 0) / 100) * baseFreight,
+              pr.topayCharges?.fixed || 0
+            ) : 0;
+            const chequeHandlingCharges = optKeys.has('chequehandling') ? (pr.chequeHandlingCharges || 0) : 0;
 
             // FIX: minCharges is a FLOOR constraint, not an additive fee
             // effectiveBaseFreight ensures freight is never below minimum
@@ -957,12 +913,19 @@ export const calculatePrice = async (req, res) => {
               odaCharges +
               handlingCharges +
               fmCharges +
-              appointmentCharges;
-            const _optionalAddon1 = computeOptionalChargeAddons(pr, chargeableWeight, baseFreight, optionalCharges, destIsOda);
-            const totalChargesBeforeAddon =
+              appointmentCharges +
+              codCharges +
+              topayCharges +
+              hamaliCharges +
+              chequeHandlingCharges;
+            const _optionalAddon1 = { total: 0, breakdown: {} };
+            const customSurcharges1 = parseFloat(computeCustomSurcharges(pr.surcharges, baseFreight, chargeableWeight, _standardSubtotal1).toFixed(2));
+            let totalChargesBeforeAddon =
               _standardSubtotal1 +
-              computeCustomSurcharges(pr.surcharges, baseFreight, chargeableWeight, _standardSubtotal1) +
+              customSurcharges1 +
               _optionalAddon1.total;
+
+            // Optional charges are conditionally applied above — no subtraction needed
 
             // 🔍 DEBUG: Log CALCULATED values for "Add Jan"
             // PERFORMANCE: Only log when ENABLE_VENDOR_DEBUG_LOGGING is true (disabled in production)
@@ -978,7 +941,7 @@ export const calculatePrice = async (req, res) => {
               console.log(`🧮 [DEBUG] rovCharges: ₹${rovCharges}`);
               console.log(`🧮 [DEBUG] handlingCharges: ₹${handlingCharges}`);
               console.log(`🧮 [DEBUG] appointmentCharges: ₹${appointmentCharges}`);
-              console.log(`🧮 [DEBUG] totalChargesBeforeAddon: ₹${totalChargesBeforeAddon.toFixed(2)}`);
+              console.log(`🧮 [DEBUG] totalChargesBeforeAddon (after subtraction): ₹${totalChargesBeforeAddon.toFixed(2)}`);
               console.log('🧮 [DEBUG CALC] =====================================');
             }
 
@@ -1012,6 +975,7 @@ export const calculatePrice = async (req, res) => {
               chargeableWeight: parseFloat(chargeableWeight.toFixed(2)),
               unitPrice,
               baseFreight,
+              effectiveBaseFreight,
               docketCharge,
               minCharges,
               greenTax,
@@ -1037,16 +1001,21 @@ export const calculatePrice = async (req, res) => {
               handlingCharges,
               fmCharges,
               appointmentCharges,
+              codCharges,
+              topayCharges,
+              hamaliCharges,
+              chequeHandlingCharges,
 
               // 🔥 NEW FIELDS (needed for UI)
+              customSurcharges: customSurcharges1,
               invoiceValue,                                       // What user entered
-              invoiceAddon: Math.round(invoiceAddon),     // Calculated surcharge
-              invoiceValueCharge: Math.round(invoiceAddon),
-              optionalChargesAddon: Math.round(_optionalAddon1.total),
+              invoiceAddon: parseFloat(invoiceAddon.toFixed(2)),     // Calculated surcharge
+              invoiceValueCharge: parseFloat(invoiceAddon.toFixed(2)),
+              optionalChargesAddon: parseFloat(_optionalAddon1.total.toFixed(2)),
               optionalChargesBreakdown: _optionalAddon1.breakdown,
 
-              totalCharges: Math.round(totalChargesBeforeAddon + invoiceAddon),
-              totalChargesWithoutInvoiceAddon: Math.round(totalChargesBeforeAddon),
+              totalCharges: parseFloat((totalChargesBeforeAddon + invoiceAddon).toFixed(2)),
+              totalChargesWithoutInvoiceAddon: parseFloat(totalChargesBeforeAddon.toFixed(2)),
 
               isHidden: false,
               isTemporaryTransporter: true,
@@ -1181,13 +1150,18 @@ export const calculatePrice = async (req, res) => {
 
             const chargeableWeight = Math.max(volumetricWeight, actualWeight);
             const baseFreight = unitPrice * chargeableWeight;
-            // Keys the user selected on the calculator page — only these are included
+            // Keys the user selected on the calculator page
             const optKeys = new Set(Array.isArray(optionalCharges) ? optionalCharges : []);
-            const docketCharge = optKeys.has('docket') ? (pr.docketCharges || 0) : 0;
+
+            // Mandatory charges — always applied
+            const docketCharge = pr.docketCharges || 0;
             const minCharges = pr.minCharges || 0;
+            // Mandatory vendor charges — always applied regardless of user selection
             const greenTax = pr.greenTax || 0;
-            const daccCharges = pr.daccCharges || 0;
             const miscCharges = pr.miscellanousCharges || 0;
+            const hamaliCharges = pr.hamaliCharges || 0;
+            // Optional charges — applied only when user selected them
+            const daccCharges = optKeys.has('dacc') ? (pr.daccCharges || 0) : 0;
             // ⚠️  FUEL SURCHARGE FORMULA — READ BEFORE MODIFYING ⚠️
             // ─────────────────────────────────────────────────────────────────
             // `pr.fuel`    = percentage stored as a whole number (e.g. 5 → 5%)
@@ -1214,7 +1188,7 @@ export const calculatePrice = async (req, res) => {
               pr.insuaranceCharges?.fixed || 0
             ) : 0;
             let odaCharges = 0;
-            if (isDestOda) {
+            if (optKeys.has('oda') && isDestOda) {
               const odaFixed = pr.odaCharges?.fixed || pr.odaCharges?.f || 0;
               const odaVar = pr.odaCharges?.variable || pr.odaCharges?.v || 0;
               const odaThreshold = pr.odaCharges?.thresholdWeight || 0;
@@ -1227,18 +1201,22 @@ export const calculatePrice = async (req, res) => {
                 odaCharges = odaFixed + (chargeableWeight * odaVar / 100);
               }
             }
-            const handlingCharges = optKeys.has('handling')
-              ? (pr.handlingCharges?.fixed || 0) +
-                chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100)
-              : 0;
+            const handlingCharges = (pr.handlingCharges?.fixed || 0) +
+              chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100);
             const fmCharges = Math.max(
               ((pr.fmCharges?.variable || 0) / 100) * baseFreight,
               pr.fmCharges?.fixed || 0
             );
-            const appointmentCharges = optKeys.has('appt') ? Math.max(
-              ((pr.appointmentCharges?.variable || 0) / 100) * baseFreight,
-              pr.appointmentCharges?.fixed || 0
+            const appointmentCharges = 0;
+            const codCharges = optKeys.has('cod') ? Math.max(
+              ((pr.codCharges?.variable || 0) / 100) * baseFreight,
+              pr.codCharges?.fixed || 0
             ) : 0;
+            const topayCharges = optKeys.has('topay') ? Math.max(
+              ((pr.topayCharges?.variable || 0) / 100) * baseFreight,
+              pr.topayCharges?.fixed || 0
+            ) : 0;
+            const chequeHandlingCharges = optKeys.has('chequehandling') ? (pr.chequeHandlingCharges || 0) : 0;
 
             // FIX: minCharges is a FLOOR constraint, not an additive fee
             // effectiveBaseFreight ensures freight is never below minimum
@@ -1256,12 +1234,19 @@ export const calculatePrice = async (req, res) => {
               odaCharges +
               handlingCharges +
               fmCharges +
-              appointmentCharges;
-            const _optionalAddon2 = computeOptionalChargeAddons(pr, chargeableWeight, baseFreight, optionalCharges, isDestOda);
-            const totalChargesBeforeAddon =
+              appointmentCharges +
+              codCharges +
+              topayCharges +
+              hamaliCharges +
+              chequeHandlingCharges;
+            const _optionalAddon2 = { total: 0, breakdown: {} };
+            const customSurcharges2 = parseFloat(computeCustomSurcharges(pr.surcharges, baseFreight, chargeableWeight, _standardSubtotal2).toFixed(2));
+            let totalChargesBeforeAddon =
               _standardSubtotal2 +
-              computeCustomSurcharges(pr.surcharges, baseFreight, chargeableWeight, _standardSubtotal2) +
+              customSurcharges2 +
               _optionalAddon2.total;
+
+            // Optional charges are conditionally applied above — no subtraction needed
 
             // PERF: Removed verbose per-vendor success logging
 
@@ -1277,12 +1262,12 @@ export const calculatePrice = async (req, res) => {
             if (!isSubscribed) {
               // Return hidden quote with charges
               return {
-                totalCharges: Math.round(totalChargesBeforeAddon + invoiceAddon),
+                totalCharges: parseFloat((totalChargesBeforeAddon + invoiceAddon).toFixed(2)),
                 totalChargesWithoutInvoiceAddon:
-                  Math.round(totalChargesBeforeAddon),
-                invoiceAddon: Math.round(invoiceAddon),
-                invoiceValueCharge: Math.round(invoiceAddon),
-                optionalChargesAddon: Math.round(_optionalAddon2.total),
+                  parseFloat(totalChargesBeforeAddon.toFixed(2)),
+                invoiceAddon: parseFloat(invoiceAddon.toFixed(2)),
+                invoiceValueCharge: parseFloat(invoiceAddon.toFixed(2)),
+                optionalChargesAddon: parseFloat(_optionalAddon2.total.toFixed(2)),
                 optionalChargesBreakdown: _optionalAddon2.breakdown,
                 isHidden: true,
               };
@@ -1300,11 +1285,11 @@ export const calculatePrice = async (req, res) => {
               chargeableWeight: parseFloat(chargeableWeight.toFixed(2)),
               unitPrice,
               baseFreight,
+              effectiveBaseFreight,
               docketCharge,
               minCharges,
               greenTax,
               daccCharges,
-              miscCharges,
               miscCharges,
               fuelCharges,
               formulaParams: {
@@ -1321,17 +1306,21 @@ export const calculatePrice = async (req, res) => {
                 effectiveBaseFreight: effectiveBaseFreight
               },
               rovCharges,
-              rovCharges,
               insuaranceCharges,
               odaCharges,
               handlingCharges,
               fmCharges,
               appointmentCharges,
-              totalCharges: Math.round(totalChargesBeforeAddon + invoiceAddon),
-              totalChargesWithoutInvoiceAddon: Math.round(totalChargesBeforeAddon),
-              invoiceAddon: Math.round(invoiceAddon),
-              invoiceValueCharge: Math.round(invoiceAddon),
-              optionalChargesAddon: Math.round(_optionalAddon2.total),
+              codCharges,
+              topayCharges,
+              hamaliCharges,
+              chequeHandlingCharges,
+              customSurcharges: customSurcharges2,
+              totalCharges: parseFloat((totalChargesBeforeAddon + invoiceAddon).toFixed(2)),
+              totalChargesWithoutInvoiceAddon: parseFloat(totalChargesBeforeAddon.toFixed(2)),
+              invoiceAddon: parseFloat(invoiceAddon.toFixed(2)),
+              invoiceValueCharge: parseFloat(invoiceAddon.toFixed(2)),
+              optionalChargesAddon: parseFloat(_optionalAddon2.total.toFixed(2)),
               optionalChargesBreakdown: _optionalAddon2.breakdown,
               isHidden: false,
               isTemporaryTransporter: false, // PUBLIC transporters are from transporters collection, NOT temporaryTransporters
@@ -1403,6 +1392,12 @@ export const calculatePrice = async (req, res) => {
           // Flatten breakdown to root so CalculationDetailsPage can read quote.docketCharge etc.
           ...utsf.breakdown,
           breakdown: utsf.breakdown,
+          // Expose invoice charges with the keys BifurcationDetails expects
+          invoiceAddon: utsf.breakdown.invoiceValueCharges || 0,
+          invoiceValueCharge: utsf.breakdown.invoiceValueCharges || 0,
+          // Expose optional charges addon (e.g. forced ODA on non-ODA destination)
+          optionalChargesAddon: utsf.optionalChargesAddon || 0,
+          optionalChargesBreakdown: utsf.optionalChargesBreakdown || {},
           isOda: utsf.isOda || false,
           unitPrice: utsf.unitPrice,
           originPincode: fromPincode,
