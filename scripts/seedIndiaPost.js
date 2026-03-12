@@ -80,11 +80,22 @@ const INDIA_POST_RATES = [
 
 export async function seedIndiaPostPricingIfEmpty() {
   try {
-    const count = await IndiaPostPricing.countDocuments();
-    if (count > 0) return; // Already seeded
-
-    await IndiaPostPricing.insertMany(INDIA_POST_RATES);
-    console.log(`[IndiaPost] Seeded ${INDIA_POST_RATES.length} pricing slabs`);
+    // Insert any weight slab that doesn't already exist in the DB.
+    // This handles partial seeds (e.g. DB has 2 slabs but seed defines 7).
+    let inserted = 0;
+    for (const rate of INDIA_POST_RATES) {
+      const exists = await IndiaPostPricing.findOne({
+        'weightRange.min': rate.weightRange.min,
+        'weightRange.max': rate.weightRange.max,
+      });
+      if (!exists) {
+        await IndiaPostPricing.create(rate);
+        inserted++;
+      }
+    }
+    if (inserted > 0) {
+      console.log(`[IndiaPost] Seeded ${inserted} missing pricing slab(s)`);
+    }
   } catch (err) {
     console.error('[IndiaPost] Failed to seed pricing:', err.message);
   }

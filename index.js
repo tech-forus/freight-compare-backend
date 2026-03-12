@@ -40,6 +40,7 @@ import ratingRoute from './routes/ratingRoute.js';
 // ✅ NEW: UTSF routes (Universal Transporter Save Format)
 import utsfRoute from './routes/utsfRoute.js';
 import utsfService from './services/utsfService.js';
+import { seedIndiaPostPricingIfEmpty } from './scripts/seedIndiaPost.js';
 import searchHistoryRoute from './routes/searchHistoryRoute.js';
 // ✅ NEW: Draft routes (ignores strict constraints)
 import draftRoutes from './routes/draftRoutes.js';
@@ -253,6 +254,8 @@ const dbT0 = Date.now();
 connectDatabase()
   .then(async () => {
     console.log(`✅ Database connected successfully in ${Date.now() - dbT0} ms`);
+    // Seed India Post pricing if collection is empty
+    await seedIndiaPostPricingIfEmpty();
     // Load UTSF transporters from MongoDB (fallback for ephemeral filesystems like Railway)
     const loaded = await utsfService.loadFromMongoDB();
     if (loaded > 0) {

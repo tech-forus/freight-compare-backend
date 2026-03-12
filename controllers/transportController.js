@@ -3,7 +3,7 @@ import customerModel from "../model/customerModel.js";
 import priceModel from "../model/priceModel.js";
 import temporaryTransporterModel from "../model/temporaryTransporterModel.js";
 import transporterModel from "../model/transporterModel.js";
-import { findIndiaPostPrice } from "../utils/indiaPostPricing.js";
+import IndiaPostPricing from "../model/indiaPostPricingModel.js";
 import PackingList from "../model/packingModel.js";
 import BoxLibrary from "../model/boxLibraryModel.js";
 import redisClient from "../utils/redisClient.js";
@@ -749,34 +749,39 @@ export const calculatePrice = async (req, res) => {
             const companyName = tuc.companyName;
             if (!companyName) return null;
 
-            // ── System vendor (IndiaPost): static pricing, no DB needed ──
+            // ── System vendor (IndiaPost): MongoDB pricing via IndiaPostPricing model ──
             if (tuc.isSystemVendor && tuc.systemVendorId === 'indiapost-transporter') {
               // Only show IndiaPost in Your Vendors for the customer who explicitly added it
               if (String(tuc.customerID) !== String(customerID)) return null;
               const distKm = distData.distanceKm || parseFloat(String(dist).replace(/[^0-9.]/g, '')) || 0;
               if (!distKm) return null;
-              const ipResult = findIndiaPostPrice(actualWeight, distKm);
-              if (!ipResult || !ipResult.price) return null;
-              return {
-                companyName: 'IndiaPost',
-                totalCharges: ipResult.price,
-                baseFreight: ipResult.price,
-                chargeableWeight: actualWeight,
-                unitPrice: actualWeight > 0 ? Math.round((ipResult.price / actualWeight) * 100) / 100 : 0,
-                breakdown: { baseFreight: ipResult.price },
-                isVerified: true,
-                isSystemVendor: true,
-                isTiedUp: true,
-                rating: tuc.rating || 4.2,
-                vendorRatings: tuc.vendorRatings || null,
-                totalRatings: tuc.totalRatings || 0,
-                weightBreakdown: { actualWeight, chargeableWeight: actualWeight },
-                source: 'indiapost',
-                distance: dist,
-                originPincode: fromPincode,
-                destinationPincode: toPincode,
-                estimatedTime: estTime,
-              };
+              try {
+                const ipResult = await IndiaPostPricing.findPricing(actualWeight, distKm);
+                if (!ipResult || !ipResult.price) return null;
+                return {
+                  companyName: 'IndiaPost',
+                  totalCharges: ipResult.price,
+                  baseFreight: ipResult.price,
+                  chargeableWeight: actualWeight,
+                  unitPrice: actualWeight > 0 ? Math.round((ipResult.price / actualWeight) * 100) / 100 : 0,
+                  breakdown: { baseFreight: ipResult.price },
+                  isVerified: true,
+                  isSystemVendor: true,
+                  isTiedUp: true,
+                  rating: tuc.rating || 4.2,
+                  vendorRatings: tuc.vendorRatings || null,
+                  totalRatings: tuc.totalRatings || 0,
+                  weightBreakdown: { actualWeight, chargeableWeight: actualWeight },
+                  source: 'indiapost',
+                  distance: dist,
+                  originPincode: fromPincode,
+                  destinationPincode: toPincode,
+                  estimatedTime: estTime,
+                };
+              } catch (ipErr) {
+                console.warn('[IndiaPost] Tied-up pricing lookup failed (weight:', actualWeight, 'dist:', distKm, '):', ipErr.message);
+                return null;
+              }
             }
 
             const priceChart = tuc.prices?.priceChart;
@@ -1512,31 +1517,36 @@ export const calculatePrice = async (req, res) => {
       const combinedCompanyResult = [...transporterResult, ...utsfPublic];
 
       // ── INDIA POST: Always inject into Other Vendors unless user already has it as a tied-up vendor ──
+      // Uses MongoDB-based IndiaPostPricing model (managed via IndiaPostAdminPage)
       const userHasIndiaPost = allTiedUpResults.some(r => r.source === 'indiapost' || r.companyName === 'IndiaPost');
       if (!userHasIndiaPost) {
         const ipDistKm = distData.distanceKm || parseFloat(String(dist).replace(/[^0-9.]/g, '')) || 0;
         if (ipDistKm > 0 && actualWeight > 0) {
-          const ipResult = findIndiaPostPrice(actualWeight, ipDistKm);
-          if (ipResult && ipResult.price) {
-            combinedCompanyResult.push({
-              companyName: 'IndiaPost',
-              totalCharges: ipResult.price,
-              baseFreight: ipResult.price,
-              chargeableWeight: actualWeight,
-              actualWeight,
-              unitPrice: Math.round((ipResult.price / actualWeight) * 100) / 100,
-              breakdown: { baseFreight: ipResult.price },
-              isVerified: true,
-              isSystemVendor: true,
-              isTiedUp: false,
-              rating: 4.2,
-              weightBreakdown: { actualWeight, chargeableWeight: actualWeight },
-              source: 'indiapost',
-              distance: dist,
-              originPincode: fromPincode,
-              destinationPincode: toPincode,
-              estimatedTime: estTime,
-            });
+          try {
+            const ipResult = await IndiaPostPricing.findPricing(actualWeight, ipDistKm);
+            if (ipResult && ipResult.price) {
+              combinedCompanyResult.push({
+                companyName: 'IndiaPost',
+                totalCharges: ipResult.price,
+                baseFreight: ipResult.price,
+                chargeableWeight: actualWeight,
+                actualWeight,
+                unitPrice: Math.round((ipResult.price / actualWeight) * 100) / 100,
+                breakdown: { baseFreight: ipResult.price },
+                isVerified: true,
+                isSystemVendor: true,
+                isTiedUp: false,
+                rating: 4.2,
+                weightBreakdown: { actualWeight, chargeableWeight: actualWeight },
+                source: 'indiapost',
+                distance: dist,
+                originPincode: fromPincode,
+                destinationPincode: toPincode,
+                estimatedTime: estTime,
+              });
+            }
+          } catch (ipErr) {
+            console.warn('[IndiaPost] Pricing lookup failed (weight:', actualWeight, 'dist:', ipDistKm, '):', ipErr.message);
           }
         }
       }
@@ -3385,9 +3395,13 @@ export const searchTransporters = async (req, res) => {
     // Only show approved vendors (matching calculator page behavior)
     const approvedOnly = { approvalStatus: 'approved' };
 
+    // Exclude system vendors (IndiaPost etc.) — they are injected by the frontend
+    // as hardcoded entries, so returning the MongoDB doc here creates a confusing duplicate.
+    const excludeSystemVendors = { isSystemVendor: { $ne: true } };
+
     const tempQuery = customerID
-      ? { $and: [{ $or: searchOr }, { customerID: customerID }, excludeTestNames, approvedOnly] }
-      : { $and: [{ $or: searchOr }, excludeTestNames, approvedOnly] };
+      ? { $and: [{ $or: searchOr }, { customerID: customerID }, excludeTestNames, approvedOnly, excludeSystemVendors] }
+      : { $and: [{ $or: searchOr }, excludeTestNames, approvedOnly, excludeSystemVendors] };
 
     // =========================================================================================
     // 🚀 CRITICAL PERFORMANCE NOTE (DO NOT REMOVE) 🚀
@@ -3637,8 +3651,105 @@ export const getSearchTransporterDetail = async (req, res) => {
 
     let vendor = null;
 
+    // ── System vendor (e.g. IndiaPost): return full company + national zone data so
+    // the wizard works end-to-end identically to any other vendor (all 4 steps).
+    if (source === 'system' && id === 'indiapost-transporter') {
+      // India Post is a national carrier — pre-populate 6 geographic zones with
+      // states + cities so the Zone Price Matrix step shows active zones.
+      const IP_ZONES = [
+        {
+          zoneCode: 'N1', zoneName: 'N1 (North A)', region: 'North', isComplete: true,
+          selectedStates: ['Delhi', 'Haryana', 'Punjab', 'Chandigarh', 'Himachal Pradesh', 'Jammu and Kashmir', 'Ladakh'],
+          selectedCities: ['Delhi', 'New Delhi', 'Gurgaon', 'Noida', 'Faridabad', 'Chandigarh', 'Ludhiana', 'Amritsar', 'Shimla', 'Jammu', 'Srinagar'],
+        },
+        {
+          zoneCode: 'N2', zoneName: 'N2 (North B)', region: 'North', isComplete: true,
+          selectedStates: ['Uttar Pradesh', 'Uttarakhand'],
+          selectedCities: ['Lucknow', 'Kanpur', 'Agra', 'Varanasi', 'Ghaziabad', 'Meerut', 'Dehradun', 'Haridwar'],
+        },
+        {
+          zoneCode: 'W1', zoneName: 'W1 (West A)', region: 'West', isComplete: true,
+          selectedStates: ['Maharashtra', 'Goa'],
+          selectedCities: ['Mumbai', 'Pune', 'Nagpur', 'Nashik', 'Aurangabad', 'Thane', 'Panaji', 'Margao'],
+        },
+        {
+          zoneCode: 'W2', zoneName: 'W2 (West B)', region: 'West', isComplete: true,
+          selectedStates: ['Gujarat', 'Rajasthan', 'Daman and Diu', 'Dadra and Nagar Haveli'],
+          selectedCities: ['Ahmedabad', 'Surat', 'Vadodara', 'Rajkot', 'Jaipur', 'Jodhpur', 'Udaipur', 'Kota'],
+        },
+        {
+          zoneCode: 'S1', zoneName: 'S1 (South A)', region: 'South', isComplete: true,
+          selectedStates: ['Karnataka', 'Tamil Nadu', 'Puducherry'],
+          selectedCities: ['Bangalore', 'Mysore', 'Mangalore', 'Chennai', 'Coimbatore', 'Madurai', 'Pondicherry'],
+        },
+        {
+          zoneCode: 'S2', zoneName: 'S2 (South B)', region: 'South', isComplete: true,
+          selectedStates: ['Andhra Pradesh', 'Telangana', 'Kerala', 'Lakshadweep', 'Andaman and Nicobar Islands'],
+          selectedCities: ['Hyderabad', 'Warangal', 'Visakhapatnam', 'Vijayawada', 'Kochi', 'Thiruvananthapuram', 'Kozhikode', 'Port Blair'],
+        },
+        {
+          zoneCode: 'E1', zoneName: 'E1 (East A)', region: 'East', isComplete: true,
+          selectedStates: ['West Bengal', 'Odisha'],
+          selectedCities: ['Kolkata', 'Howrah', 'Durgapur', 'Siliguri', 'Bhubaneswar', 'Cuttack', 'Rourkela'],
+        },
+        {
+          zoneCode: 'E2', zoneName: 'E2 (East B)', region: 'East', isComplete: true,
+          selectedStates: ['Bihar', 'Jharkhand'],
+          selectedCities: ['Patna', 'Gaya', 'Muzaffarpur', 'Bhagalpur', 'Ranchi', 'Jamshedpur', 'Dhanbad'],
+        },
+        {
+          zoneCode: 'C1', zoneName: 'C1 (Central)', region: 'Central', isComplete: true,
+          selectedStates: ['Madhya Pradesh', 'Chhattisgarh'],
+          selectedCities: ['Bhopal', 'Indore', 'Jabalpur', 'Gwalior', 'Raipur', 'Bilaspur', 'Bhilai'],
+        },
+        {
+          zoneCode: 'NE', zoneName: 'NE (Northeast)', region: 'Northeast', isComplete: true,
+          selectedStates: ['Assam', 'Meghalaya', 'Manipur', 'Mizoram', 'Nagaland', 'Tripura', 'Arunachal Pradesh', 'Sikkim'],
+          selectedCities: ['Guwahati', 'Dibrugarh', 'Silchar', 'Shillong', 'Imphal', 'Aizawl', 'Kohima', 'Agartala', 'Itanagar', 'Gangtok'],
+        },
+      ];
+
+      vendor = {
+        id,
+        source: 'system',
+        isTemporary: true,
+        isSystemVendor: false, // Maintain wizard flow (don't shortcut)
+        companyName: 'IndiaPost',
+        legalCompanyName: 'India Post (Department of Posts)',
+        displayName: 'IndiaPost',
+        vendorCode: 'INDIAPOST',
+        vendorEmail: 'customerservice@indiapost.gov.in',
+        vendorPhone: '1800 266 6868',
+        gstNo: '07AAAGE5950H1Z6',
+        contactPersonName: 'Nodal Officer',
+        subVendor: '',
+        mode: 'Road',
+        transportMode: 'Road',
+        address: 'Department of Posts, Dak Bhawan, Sansad Marg, New Delhi',
+        state: 'Delhi',
+        city: 'New Delhi',
+        pincode: '110001',
+        rating: 4.2,
+        zones: IP_ZONES.map(z => z.zoneCode),
+        zoneConfigs: IP_ZONES,
+        serviceability: [],
+        // serviceMode must be inside charges — useVendorAutofill reads vendor.charges.serviceMode
+        charges: { 
+          divisor: 5000, 
+          serviceMode: 'LTL',
+          minWeight: 0.5,
+          docketCharges: 0,
+          fuel: 0,
+          minCharges: 35
+        },
+        priceChart: {},
+        invoiceValueCharges: { enabled: false }, // Explicitly disable to avoid errors
+        serviceabilityChecksum: 'national-coverage',
+        serviceabilitySource: 'indiapost-system',
+      };
+    }
     // UTSF source
-    if (source === 'utsf') {
+    else if (source === 'utsf') {
       const t = utsfService.getTransporterById ? utsfService.getTransporterById(id) : null;
       if (t) {
         const zoneKeys = Object.keys(t.serviceability || {});

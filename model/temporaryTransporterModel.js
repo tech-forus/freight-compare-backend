@@ -202,14 +202,17 @@ const temporaryTransporterModel = new mongoose.Schema(
           default: 0,
         },
         rovCharges: {
-          variable: {
-            type: Number,
-            default: 0,
+          variable: { type: Number, default: 0 },
+          fixed: { type: Number, default: 0 },
+          unit: {
+            type: String,
+            enum: ['per kg', 'per shipment', 'per piece', 'per box'],
+            default: 'per kg',
           },
-          fixed: {
-            type: Number,
-            default: 0,
-          },
+        },
+        insuranceCharges: {
+          variable: { type: Number, default: 0 },
+          fixed: { type: Number, default: 0 },
           unit: {
             type: String,
             enum: ['per kg', 'per shipment', 'per piece', 'per box'],
@@ -292,19 +295,14 @@ const temporaryTransporterModel = new mongoose.Schema(
           },
         },
         handlingCharges: {
-          variable: {
-            type: Number,
-            default: 0,
-          },
-          fixed: {
-            type: Number,
-            default: 0,
-          },
+          variable: { type: Number, default: 0 },
+          fixed: { type: Number, default: 0 },
           unit: {
             type: String,
             enum: ['per kg', 'per shipment', 'per piece', 'per box'],
             default: 'per kg',
           },
+          thresholdWeight: { type: Number, default: 0 },
         },
         fmCharges: {
           variable: {
@@ -345,20 +343,29 @@ const temporaryTransporterModel = new mongoose.Schema(
           default: 0,
         },
         greenTax: {
-          type: Number,
-          default: 0,
+          variable: { type: Number, default: 0 },
+          fixed: { type: Number, default: 0 },
+          unit: { type: String, default: 'per shipment' },
+        },
+        hamaliCharges: {
+          variable: { type: Number, default: 0 },
+          fixed: { type: Number, default: 0 },
+          unit: { type: String, default: 'per kg' },
         },
         daccCharges: {
-          type: Number,
-          default: 0,
+          variable: { type: Number, default: 0 },
+          fixed: { type: Number, default: 0 },
+          unit: { type: String, default: 'per shipment' },
         },
         miscellanousCharges: {
-          type: Number,
-          default: 0,
+          variable: { type: Number, default: 0 },
+          fixed: { type: Number, default: 0 },
+          unit: { type: String, default: 'per shipment' },
         },
         chequeHandlingCharges: {
-          type: Number,
-          default: 0,
+          variable: { type: Number, default: 0 },
+          fixed: { type: Number, default: 0 },
+          unit: { type: String, default: 'per shipment' },
         },
       },
       priceChart: {

@@ -31,6 +31,13 @@ const getIndiaPostPricing = async (req, res) => {
 
         const pricing = await IndiaPostPricing.findPricing(weightNum, distanceNum);
 
+        if (!pricing) {
+            return res.status(404).json({
+                success: false,
+                message: `No IndiaPost pricing available for weight ${weightNum}kg and distance ${distanceNum}km`
+            });
+        }
+
         res.json({
             success: true,
             data: pricing
