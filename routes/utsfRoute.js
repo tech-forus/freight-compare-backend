@@ -142,7 +142,7 @@ router.get('/transporters/:id', (req, res) => {
  * Calculate price using UTSF data
  * Body: { fromPincode, toPincode, weight, dimensions, noofboxes, shipment_details?, invoiceValue? }
  */
-router.post('/calculate', protect, calculatorRateLimiter, (req, res) => {
+router.post('/calculate', protect, calculatorRateLimiter, async (req, res) => {
   try {
     const {
       fromPincode,
@@ -188,11 +188,17 @@ router.post('/calculate', protect, calculatorRateLimiter, (req, res) => {
       });
     }
 
-    // Calculate prices for all serviceable transporters
-    const allVendors = utsfService.getAllTransporters();
-    
+    // 1. Resolve vendor relationships for this customer (before UTSF runs)
+    // candidateVendors shape: [{ transporter, isCustomerVendor, source }]
+    // calculatePricesForRoute already reads candidate.isCustomerVendor and propagates it into results
+    const customerId = req.user?._id;
+    const candidateVendors = customerId
+      ? await vendorRegistryService.getCandidateVendors(String(customerId))
+      : utsfService.getAllTransporters().map(t => ({ transporter: t, isCustomerVendor: false, source: 'system' }));
+
+    // 2. UTSF calculates pricing — ownership flows through automatically
     const results = utsfService.calculatePricesForRoute(
-      allVendors,
+      candidateVendors,
       fromPincode,
       toPincode,
       chargeableWeight,
