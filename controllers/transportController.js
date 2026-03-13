@@ -16,6 +16,7 @@ import fs from "fs";
 import dotenv from "dotenv";
 import workerPool from "../services/worker-pool.service.js";
 import utsfService from "../services/utsfService.js";
+import vendorRegistryService from "../services/vendorRegistryService.js";
 import { validateAllQuotes } from "../utils/smartShield.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -881,14 +882,16 @@ export const calculatePrice = async (req, res) => {
             const optKeys = new Set(Array.isArray(optionalCharges) ? optionalCharges : []);
 
             // Mandatory charges — always applied
-            const docketCharge = pr.docketCharges || 0;
-            const minCharges = pr.minCharges || 0;
+            // n() coerces any string-typed DB value to a number (prevents toFixed crash)
+            const n = v => Number(v) || 0;
+            const docketCharge = n(pr.docketCharges);
+            const minCharges = n(pr.minCharges);
             // Mandatory vendor charges — always applied regardless of user selection
-            const greenTax = pr.greenTax || 0;
-            const miscCharges = pr.miscellanousCharges || 0;
-            const hamaliCharges = pr.hamaliCharges || 0;
+            const greenTax = n(pr.greenTax);
+            const miscCharges = n(pr.miscellanousCharges);
+            const hamaliCharges = n(pr.hamaliCharges);
             // Optional charges — applied only when user selected them
-            const daccCharges = optKeys.has('dacc') ? (pr.daccCharges || 0) : 0;
+            const daccCharges = optKeys.has('dacc') ? n(pr.daccCharges) : 0;
             // ⚠️  FUEL SURCHARGE FORMULA — READ BEFORE MODIFYING ⚠️
             // ─────────────────────────────────────────────────────────────────
             // `pr.fuel`    = percentage stored as a whole number (e.g. 5 → 5%)
@@ -904,36 +907,36 @@ export const calculatePrice = async (req, res) => {
             // MUST stay in sync with Block 2 (line ~1074) and utsfService.js (~line 497).
             // ─────────────────────────────────────────────────────────────────
             const fuelCharges = optKeys.has('fuel')
-              ? Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity)
+              ? Math.min((n(pr.fuel) / 100) * baseFreight, Number(pr.fuelMax) || Infinity)
               : 0;
             const rovCharges = optKeys.has('fov') ? Math.max(
-              ((pr.rovCharges?.variable || 0) / 100) * baseFreight,
-              pr.rovCharges?.fixed || 0
+              (n(pr.rovCharges?.variable) / 100) * baseFreight,
+              n(pr.rovCharges?.fixed)
             ) : 0;
             const insuaranceCharges = optKeys.has('fov') ? Math.max(
-              ((pr.insuaranceCharges?.variable || 0) / 100) * baseFreight,
-              pr.insuaranceCharges?.fixed || 0
+              (n(pr.insuaranceCharges?.variable) / 100) * baseFreight,
+              n(pr.insuaranceCharges?.fixed)
             ) : 0;
             const odaCharges = (optKeys.has('oda') && destIsOda)
-              ? (pr.odaCharges?.fixed || 0) +
-              chargeableWeight * ((pr.odaCharges?.variable || 0) / 100)
+              ? n(pr.odaCharges?.fixed) +
+              chargeableWeight * (n(pr.odaCharges?.variable) / 100)
               : 0;
-            const handlingCharges = (pr.handlingCharges?.fixed || 0) +
-              chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100);
+            const handlingCharges = n(pr.handlingCharges?.fixed) +
+              chargeableWeight * (n(pr.handlingCharges?.variable) / 100);
             const fmCharges = Math.max(
-              ((pr.fmCharges?.variable || 0) / 100) * baseFreight,
-              pr.fmCharges?.fixed || 0
+              (n(pr.fmCharges?.variable) / 100) * baseFreight,
+              n(pr.fmCharges?.fixed)
             );
             const appointmentCharges = 0;
             const codCharges = optKeys.has('cod') ? Math.max(
-              ((pr.codCharges?.variable || 0) / 100) * baseFreight,
-              pr.codCharges?.fixed || 0
+              (n(pr.codCharges?.variable) / 100) * baseFreight,
+              n(pr.codCharges?.fixed)
             ) : 0;
             const topayCharges = optKeys.has('topay') ? Math.max(
-              ((pr.topayCharges?.variable || 0) / 100) * baseFreight,
-              pr.topayCharges?.fixed || 0
+              (n(pr.topayCharges?.variable) / 100) * baseFreight,
+              n(pr.topayCharges?.fixed)
             ) : 0;
-            const chequeHandlingCharges = optKeys.has('chequehandling') ? (pr.chequeHandlingCharges || 0) : 0;
+            const chequeHandlingCharges = optKeys.has('chequehandling') ? n(pr.chequeHandlingCharges) : 0;
 
             // FIX: minCharges is a FLOOR constraint, not an additive fee
             // effectiveBaseFreight ensures freight is never below minimum
@@ -1192,14 +1195,16 @@ export const calculatePrice = async (req, res) => {
             const optKeys = new Set(Array.isArray(optionalCharges) ? optionalCharges : []);
 
             // Mandatory charges — always applied
-            const docketCharge = pr.docketCharges || 0;
-            const minCharges = pr.minCharges || 0;
+            // n() coerces any string-typed DB value to a number (prevents toFixed crash)
+            const n = v => Number(v) || 0;
+            const docketCharge = n(pr.docketCharges);
+            const minCharges = n(pr.minCharges);
             // Mandatory vendor charges — always applied regardless of user selection
-            const greenTax = pr.greenTax || 0;
-            const miscCharges = pr.miscellanousCharges || 0;
-            const hamaliCharges = pr.hamaliCharges || 0;
+            const greenTax = n(pr.greenTax);
+            const miscCharges = n(pr.miscellanousCharges);
+            const hamaliCharges = n(pr.hamaliCharges);
             // Optional charges — applied only when user selected them
-            const daccCharges = optKeys.has('dacc') ? (pr.daccCharges || 0) : 0;
+            const daccCharges = optKeys.has('dacc') ? n(pr.daccCharges) : 0;
             // ⚠️  FUEL SURCHARGE FORMULA — READ BEFORE MODIFYING ⚠️
             // ─────────────────────────────────────────────────────────────────
             // `pr.fuel`    = percentage stored as a whole number (e.g. 5 → 5%)
@@ -1215,21 +1220,21 @@ export const calculatePrice = async (req, res) => {
             // MUST stay in sync with Block 1 (line ~811) and utsfService.js (~line 497).
             // ─────────────────────────────────────────────────────────────────
             const fuelCharges = optKeys.has('fuel')
-              ? Math.min(((pr.fuel || 0) / 100) * baseFreight, pr.fuelMax || Infinity)
+              ? Math.min((n(pr.fuel) / 100) * baseFreight, Number(pr.fuelMax) || Infinity)
               : 0;
             const rovCharges = optKeys.has('fov') ? Math.max(
-              ((pr.rovCharges?.variable || 0) / 100) * baseFreight,
-              pr.rovCharges?.fixed || 0
+              (n(pr.rovCharges?.variable) / 100) * baseFreight,
+              n(pr.rovCharges?.fixed)
             ) : 0;
             const insuaranceCharges = optKeys.has('fov') ? Math.max(
-              ((pr.insuaranceCharges?.variable || 0) / 100) * baseFreight,
-              pr.insuaranceCharges?.fixed || 0
+              (n(pr.insuaranceCharges?.variable) / 100) * baseFreight,
+              n(pr.insuaranceCharges?.fixed)
             ) : 0;
             let odaCharges = 0;
             if (optKeys.has('oda') && isDestOda) {
-              const odaFixed = pr.odaCharges?.fixed || pr.odaCharges?.f || 0;
-              const odaVar = pr.odaCharges?.variable || pr.odaCharges?.v || 0;
-              const odaThreshold = pr.odaCharges?.thresholdWeight || 0;
+              const odaFixed = n(pr.odaCharges?.fixed ?? pr.odaCharges?.f);
+              const odaVar = n(pr.odaCharges?.variable ?? pr.odaCharges?.v);
+              const odaThreshold = n(pr.odaCharges?.thresholdWeight);
               const odaMode = pr.odaCharges?.mode || 'legacy';
               if (odaMode === 'switch') {
                 odaCharges = chargeableWeight <= odaThreshold ? odaFixed : odaVar * chargeableWeight;
@@ -1239,22 +1244,22 @@ export const calculatePrice = async (req, res) => {
                 odaCharges = odaFixed + (chargeableWeight * odaVar / 100);
               }
             }
-            const handlingCharges = (pr.handlingCharges?.fixed || 0) +
-              chargeableWeight * ((pr.handlingCharges?.variable || 0) / 100);
+            const handlingCharges = n(pr.handlingCharges?.fixed) +
+              chargeableWeight * (n(pr.handlingCharges?.variable) / 100);
             const fmCharges = Math.max(
-              ((pr.fmCharges?.variable || 0) / 100) * baseFreight,
-              pr.fmCharges?.fixed || 0
+              (n(pr.fmCharges?.variable) / 100) * baseFreight,
+              n(pr.fmCharges?.fixed)
             );
             const appointmentCharges = 0;
             const codCharges = optKeys.has('cod') ? Math.max(
-              ((pr.codCharges?.variable || 0) / 100) * baseFreight,
-              pr.codCharges?.fixed || 0
+              (n(pr.codCharges?.variable) / 100) * baseFreight,
+              n(pr.codCharges?.fixed)
             ) : 0;
             const topayCharges = optKeys.has('topay') ? Math.max(
-              ((pr.topayCharges?.variable || 0) / 100) * baseFreight,
-              pr.topayCharges?.fixed || 0
+              (n(pr.topayCharges?.variable) / 100) * baseFreight,
+              n(pr.topayCharges?.fixed)
             ) : 0;
-            const chequeHandlingCharges = optKeys.has('chequehandling') ? (pr.chequeHandlingCharges || 0) : 0;
+            const chequeHandlingCharges = optKeys.has('chequehandling') ? n(pr.chequeHandlingCharges) : 0;
 
             // FIX: minCharges is a FLOOR constraint, not an additive fee
             // effectiveBaseFreight ensures freight is never below minimum
@@ -1407,7 +1412,10 @@ export const calculatePrice = async (req, res) => {
         );
         const chargeableWeight = Math.max(defaultVolWeight, actualWeight);
 
+        const candidateVendors = await vendorRegistryService.getCandidateVendors(customerID);
+
         utsfResults = utsfService.calculatePricesForRoute(
+          candidateVendors,
           fromPincode,
           toPincode,
           chargeableWeight,
@@ -1426,7 +1434,8 @@ export const calculatePrice = async (req, res) => {
           zone: `${utsf.originZone} → ${utsf.destZone}`,
           rating: utsf.rating || 4.0,
           isVerified: utsf.isVerified || false,
-          source: 'utsf', // Mark as UTSF source
+          source: utsf.source || 'utsf', // use dynamic source tag from registry
+          isCustomerVendor: utsf.isCustomerVendor, // pass ownership flag from registry
           // Flatten breakdown to root so CalculationDetailsPage can read quote.docketCharge etc.
           ...utsf.breakdown,
           breakdown: utsf.breakdown,
@@ -1506,10 +1515,10 @@ export const calculatePrice = async (req, res) => {
       // Split UTSF results: user's own UTSF vendors go to tiedUp, rest to company
       // Set isTiedUp flag correctly so frontend categorizes them properly
       const utsfTiedUp = newUtsfResults
-        .filter(u => u.customerID && String(u.customerID) === String(customerID))
+        .filter(u => u.isCustomerVendor)
         .map(u => ({ ...u, isTiedUp: true }));
       const utsfPublic = newUtsfResults
-        .filter(u => !u.customerID || String(u.customerID) !== String(customerID))
+        .filter(u => !u.isCustomerVendor)
         .map(u => ({ ...u, isTiedUp: false }));
       allTiedUpResults.push(...utsfTiedUp);
 
@@ -2206,18 +2215,21 @@ export const getTemporaryTransporters = async (req, res) => {
     // UTSF MERGE: Inject UTSF transporters for this customer
     // =========================================================
     if (customerID) {
-      const utsfTransporters = utsfService.getTransportersByCustomerId(customerID);
+      const candidates = await vendorRegistryService.getCandidateVendors(customerID);
+      const utsfTransporters = candidates
+        .filter(c => c.isCustomerVendor)
+        .map(c => c.transporter);
 
       // Convert UTSF to compatible format
       const utsfformatted = utsfTransporters.map(t => ({
         _id: t.id,
         companyName: t.companyName,
-        approvalStatus: t.data.meta?.approvalStatus || 'pending',
+        approvalStatus: t.data?.meta?.approvalStatus || 'approved',
         isVerified: t.isVerified,
         rating: t.rating,
         transporterType: t.transporterType,
         source: 'utsf', // Flag for frontend
-        updatedAt: t.data.meta?.updatedAt
+        updatedAt: t.data?.meta?.updatedAt || new Date().toISOString()
       }));
 
       // HOT-SWITCH: Remove MongoDB entries that are overridden by UTSF

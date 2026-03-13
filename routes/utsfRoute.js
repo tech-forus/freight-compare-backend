@@ -5,6 +5,9 @@ import { fileURLToPath } from 'url';
 import utsfService from '../services/utsfService.js';
 import UTSFModel from '../model/utsfModel.js';
 import temporaryTransporterModel from '../model/temporaryTransporterModel.js';
+import jwt from 'jsonwebtoken';
+
+import vendorRegistryService from '../services/vendorRegistryService.js';
 import multer from 'multer';
 import { protect } from '../middleware/authMiddleware.js';
 import { calculatorRateLimiter } from '../middleware/rateLimiter.js';
@@ -186,7 +189,10 @@ router.post('/calculate', protect, calculatorRateLimiter, (req, res) => {
     }
 
     // Calculate prices for all serviceable transporters
+    const allVendors = utsfService.getAllTransporters();
+    
     const results = utsfService.calculatePricesForRoute(
+      allVendors,
       fromPincode,
       toPincode,
       chargeableWeight,
@@ -994,7 +1000,7 @@ router.get('/nearest-serviceable', async (req, res) => {
  * GET /api/utsf/my-vendors?customerId=X
  * Returns UTSF transporters linked to a specific customer
  */
-router.get('/my-vendors', (req, res) => {
+router.get('/my-vendors', async (req, res) => {
   try {
     const { customerId } = req.query;
     if (!customerId) {
@@ -1004,29 +1010,32 @@ router.get('/my-vendors', (req, res) => {
       });
     }
 
-    const allTransporters = utsfService.getAllTransporters();
+    const allTransporters = await vendorRegistryService.getCandidateVendors(customerId);
     const userTransporters = allTransporters
-      .filter(t => t.customerID && String(t.customerID) === String(customerId))
-      .map(t => ({
-        _id: t.id,
-        companyName: t.companyName,
-        customerID: t.customerID,
-        transporterType: t.transporterType,
-        rating: t.rating,
-        isVerified: t.isVerified,
-        totalPincodes: t.totalPincodes,
-        integrityMode: t._data?.meta?.integrityMode || 'NONE',
-        softExclusions: t.getSoftExclusions().length,
-        source: 'UTSF',
-        createdAt: t._data?.meta?.created?.at || t._data?.meta?.createdAt || null,
-        updatedAt: t._data?.updates?.length > 0
-          ? t._data.updates[t._data.updates.length - 1].timestamp
-          : null,
-        pricing: t._data?.pricing ? {
-          priceRate: t._data.pricing.priceRate || {},
-          priceChart: t._data.pricing.priceChart || null
-        } : null
-      }));
+      .filter(entry => entry.isCustomerVendor)
+      .map(entry => {
+        const t = entry.transporter;
+        return {
+          _id: t.id,
+          companyName: t.companyName,
+          customerID: t.customerID,
+          transporterType: t.transporterType,
+          rating: t.rating,
+          isVerified: t.isVerified,
+          totalPincodes: t.totalPincodes,
+          integrityMode: t._data?.meta?.integrityMode || 'NONE',
+          softExclusions: t.getSoftExclusions().length,
+          source: 'UTSF',
+          createdAt: t._data?.meta?.created?.at || t._data?.meta?.createdAt || null,
+          updatedAt: t._data?.updates?.length > 0
+            ? t._data.updates[t._data.updates.length - 1].timestamp
+            : null,
+          pricing: t._data?.pricing ? {
+            priceRate: t._data.pricing.priceRate || {},
+            priceChart: t._data.pricing.priceChart || null
+          } : null
+        };
+      });
 
     res.json({
       success: true,

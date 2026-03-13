@@ -814,10 +814,13 @@ class UTSFService {
   /**
    * Calculate prices for all serviceable transporters on a route
    */
-  calculatePricesForRoute(fromPincode, toPincode, chargeableWeight, invoiceValue = 0, optionalCharges = []) {
+  calculatePricesForRoute(candidateVendors, fromPincode, toPincode, chargeableWeight, invoiceValue = 0, optionalCharges = []) {
     const results = [];
 
-    for (const transporter of this.transporters.values()) {
+    for (const candidate of candidateVendors) {
+      const transporter = candidate.transporter || candidate;
+      const isCustomerVendor = candidate.isCustomerVendor || false;
+
       const priceResult = transporter.calculatePrice(
         fromPincode,
         toPincode,
@@ -838,7 +841,8 @@ class UTSFService {
           approvalStatus: transporter._data?.meta?.approvalStatus || 'approved',
           transporterType: transporter.transporterType,
           ...priceResult,
-          source: 'utsf'
+          source: candidate.source || 'utsf',
+          isCustomerVendor: isCustomerVendor
         });
       } else {
         // 🛑 REJECTION LOGGING 🛑

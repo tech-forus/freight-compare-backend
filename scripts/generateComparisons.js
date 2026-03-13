@@ -25,8 +25,9 @@ async function run() {
 
   for (const dest of destinations) {
     console.log(`\n--- Fetching UTSF for 110020 to ${dest} ---`);
-    const resAll = utsfService.calculatePricesForRoute("110020", dest, 50, 50000, allOptional);
-    const resNone = utsfService.calculatePricesForRoute("110020", dest, 50, 50000, none);
+    const allVendors = utsfService.getAllTransporters();
+    const resAll = utsfService.calculatePricesForRoute(allVendors, "110020", dest, 50, 50000, allOptional);
+    const resNone = utsfService.calculatePricesForRoute(allVendors, "110020", dest, 50, 50000, none);
     
     results[dest] = {
       all: resAll || [],
